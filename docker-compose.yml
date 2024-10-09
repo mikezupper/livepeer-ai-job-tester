@@ -1,0 +1,39 @@
+services:
+  job-tester:
+    image: registry.livepeer.tools/job-tester:v0.0.1
+    depends_on:
+      - tester-gateway
+
+  tester-gateway:
+    image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.9-livepeer-cloud-job-tester
+    restart: unless-stopped
+    hostname: tester-gateway
+    container_name: tester-gateway
+    volumes:
+      - tester-gateway-lpData:/root/.lpData
+    command: '-ethUrl=YOUR_RPC_URL
+              -ethPassword=/root/.lpData/eth-secret.txt
+              -ethKeystorePath=/root/.lpData
+              -network=arbitrum-one-mainnet
+              -serviceAddr=tester-gateway:8935
+              -cliAddr=tester-gateway:7935
+              -gateway=true
+              -monitor=true
+              -maxPricePerUnit=125000000
+              -maxTotalEV=100000000000000
+              -v=4
+              -pixelsPerUnit=1
+              -blockPollingInterval=20
+              -httpIngest=true
+              -httpAddr=0.0.0.0:8935
+              -orchMinLivepeerVersion=v0.7.9-ai.3
+              '
+
+volumes:
+  tester-gateway-lpData:
+    external: true
+
+networks:
+  default:
+    name: lpc-tester
+    external: true

@@ -1,0 +1,102 @@
+{
+  "region": "NYC",
+  "jobType" : "ai",
+  "internalWebServerPort": "7934",
+  "internalWebServerAddress": "0.0.0.0",
+  "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
+  "metricsSecret": "my-secret-key",
+  "broadcasterJobEndpoint": "http://localhost:8935",
+  "broadcasterCliEndpoint": "http://localhost:7935",
+  "broadcasterRequestToken": "None",
+  "pipelines": [
+    {
+      "name": "Segment anything 2",
+      "uri": "segment-anything-2",
+      "capture_response": false,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "box": "[380.50, 130.00, 651.50, 479.00]",
+        "multimask_output": true,
+        "return_logits": true,
+        "normalize_coords": true,
+        "safety_check": false
+      }
+    },
+    {
+      "name": "Text to image",
+      "uri": "text-to-image",
+      "capture_response": true,
+      "contentType": "application/json",
+      "parameters": {
+        "prompt": "a bear",
+        "width": 512,
+        "height": 512,
+        "num_images_per_prompt": 1,
+        "num_inference_steps": 20,
+        "guidance_scale": 2,
+        "safety_check": false
+      }
+    },
+    {
+      "name": "Image to image",
+      "uri": "image-to-image",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "guidance_scale": 2,
+        "image_guidance_scale": 2,
+        "num_images_per_prompt": 1,
+        "num_inference_steps": 20,
+        "prompt": "a bear",
+        "safety_check": false,
+        "strength": 1
+      }
+    },
+    {
+      "name": "Image to video",
+      "uri": "image-to-video",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "width": 1024,
+        "height": 576,
+        "fps": 8,
+        "motion_bucket_id": 127,
+        "noise_aug_strength": 0.065
+      }
+    },
+    {
+      "name": "Upscale",
+      "uri": "upscale",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "prompt": "a bear",
+        "width": 512,
+        "height": 512,
+        "num_images_per_prompt": 1,
+        "num_inference_steps": 20,
+        "guidance_scale": 2,
+        "safety_check": false
+      }
+    },
+    {
+      "name": "Audio to text",
+      "uri": "audio-to-text",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+      }
+    },
+    {
+      "name": "Large language model",
+      "uri": "llm",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "max_tokens": 256,
+        "prompt": "how many characters are in an ethereum address?"
+      }
+    }
+  ]
+}
