@@ -1,22 +1,30 @@
 services:
-  job-tester:
-    image: registry.livepeer.tools/job-tester:v0.0.1
+  ai-job-tester:
+    image: ai-job-tester:latest
+    container_name: "ai-job-tester"
+    restart: unless-stopped
+    volumes:
+      - ai-job-tester:/app/configs
+    environment:
+      - TZ=UTC
+      - CRONTAB_SCHEDULE=0 */2 * * *
+      - CONFIG_FILE=/app/configs/config.json
     depends_on:
       - tester-gateway
 
   tester-gateway:
     image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.9-livepeer-cloud-job-tester
     restart: unless-stopped
-    hostname: tester-gateway
-    container_name: tester-gateway
+    hostname: ai-tester-gateway
+    container_name: ai-tester-gateway
     volumes:
       - tester-gateway-lpData:/root/.lpData
     command: '-ethUrl=YOUR_RPC_URL
               -ethPassword=/root/.lpData/eth-secret.txt
               -ethKeystorePath=/root/.lpData
               -network=arbitrum-one-mainnet
-              -serviceAddr=tester-gateway:8935
-              -cliAddr=tester-gateway:7935
+              -serviceAddr=ai-tester-gateway:8935
+              -cliAddr=ai-tester-gateway:7935
               -gateway=true
               -monitor=true
               -maxPricePerUnit=125000000
@@ -27,13 +35,14 @@ services:
               -httpIngest=true
               -httpAddr=0.0.0.0:8935
               -orchMinLivepeerVersion=v0.7.9-ai.3
+              -discoveryTimeout=750ms
+              -webhookRefreshInterval=0
+              -aiSessionTimeout=0
+              -orchWebhookUrl=http://ai-job-tester:7934/orchestrators
               '
 
 volumes:
   tester-gateway-lpData:
     external: true
-
-networks:
-  default:
-    name: lpc-tester
+  ai-job-tester:
     external: true
