@@ -5,8 +5,8 @@
   "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "my-secret-key",
-  "broadcasterJobEndpoint": "http://localhost:8935",
-  "broadcasterCliEndpoint": "http://localhost:7935",
+  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
+  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
   "broadcasterRequestToken": "None",
   "pipelines": [
     {

@@ -17,10 +17,10 @@ import (
 )
 
 func main() {
-	sourceLeaderboardURL := flag.String("source-api", "http://leaderboard-serverless.vercel.app", "Source Leaderboard API Server URL")
+	sourceLeaderboardURL := flag.String("source-api", "http://localhost:8080", "Source Leaderboard API Server URL")
 	leaderboardURL := flag.String("api", "http://localhost:8080", "Destination Leaderboard API Server URL")
 	gatewayURL := flag.String("gw", "http://localhost:7935", "Livepeer Gateway Cli Endpoint URL")
-	apiSecretKey := flag.String("secret", "my-secret-key", "Destination Leaderboard API Secret Key")
+	apiSecretKey := flag.String("secret", "your-api-secret-key", "Destination Leaderboard API Secret Key")
 	flag.Parse()
 
 	fmt.Printf("Starting Data Transfer from [%s].  Gateway [%s] and Leaderboard API  [%s] secret key [*****]\n", *sourceLeaderboardURL, *gatewayURL, *leaderboardURL)
