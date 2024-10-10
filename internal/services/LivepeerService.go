@@ -133,6 +133,6 @@ func (s *HTTPLivepeerService) PostStats(stats *types.Stats) error {
 	}
 
 	// Log the successful posting of stats.
-	fmt.Printf("Posted stats for orchestrator %s - success=%v   latency=%v \n", stats.Orchestrator, stats.SuccessRate, stats.RoundTripTime)
+	fmt.Printf("Posted stats for region=[%s] orchestrator=[%s] pipeline=[%s] model=[%s] success=[%v]  latency=[%v] \n", stats.Region, stats.Orchestrator, stats.Pipeline, stats.Model, stats.SuccessRate, stats.RoundTripTime)
 	return nil
 }

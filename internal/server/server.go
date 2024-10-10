@@ -70,13 +70,13 @@ func (ss *EmbeddedWebhookServer) StartServer(addr string) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		fmt.Println("[StartServer] Shutting down web server")
+		log.Println("[StartServer] Shutting down web server")
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			fmt.Printf("[StartServer] failed to shutdown web server: %v\n", err)
+			log.Printf("[StartServer] failed to shutdown web server: %v\n", err)
 		}
 	}()
 
-	fmt.Printf("[StartServer] Web server listening at %s\n", addr)
+	log.Printf("[StartServer] Web server listening at %s\n", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("[StartServer] ListenAndServe error: %w", err)
 	}
@@ -140,8 +140,8 @@ func (ss *EmbeddedWebhookServer) RunTestJobs() error {
 		log.Println("Error marshalling job stats to JSON:", err)
 		return err
 	}
-	fmt.Println("Job Stats Report:")
-	fmt.Println(string(statsJSON))
+	log.Println("Job Stats Report:")
+	log.Println(string(statsJSON))
 	return nil
 }
 
