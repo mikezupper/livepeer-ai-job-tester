@@ -1,17 +1,27 @@
 # The Livepeer AI Job Tester
 
 ## Overview
-This application is responsible for executing AI Test Jobs against each Livepeer Orchestrator on the Livpeeer AI Network.
+The **Livepeer AI Job Tester** is a versatile tool for executing AI test jobs across all Livepeer Orchestrators on the Livepeer AI Network. Its purpose is to ensure each Orchestrator is tested only on the pipelines and models they support, allowing seamless testing and the production of network reliability metrics.
 
-### Key Features Supported
-* Each Orchestrator is only tested for the Pipelines and Models they support
-* Configuration-based support for multiple pipelines and models.
-  * Easily add new Pipeline and Model support over time.
-* Integrates with the Livepeer Leaderboard Serverless API (TODO add link)
-* Decoupled from go-livepeer Gateway Node.
-  * Uses the HTTP Rest Endpoint to send jobs to the gateway node.
-* Docker Supported
-  * Enables `Crontab` scheduling of Test Jobs
+## Key Features
+
+- **Targeted Testing**  
+  Each Orchestrator is only tested for the pipelines and models it supports, ensuring efficient and accurate testing.
+
+- **Configuration-Based Flexibility**  
+  Easily manage support for multiple pipelines and models through a configuration-based system. New pipelines and models can be added over time without modifying the core code.
+
+- **Integration with Livepeer Leaderboard**  
+  Integrates with the [Livepeer Leaderboard Serverless API](https://github.com/livepeer/leaderboard-serverless)) for enhanced reporting and Orchestrator performance tracking.
+
+- **Decoupled Architecture**  
+  Operates independently of the `go-livepeer` Gateway Node, using HTTP REST endpoints to send AI jobs directly to a separately deployed Gateway node.
+
+- **Docker Support**  
+  Fully Dockerized for easy setup and deployment across various environments.
+
+- **Scheduled Job Execution**  
+  Supports `Crontab` scheduling to automate the execution of test jobs at regular intervals.
 
 ### Figure 1 - AI Job Testing Architecture
 This repository covers the *"Livepeer AI Job Tester"* box in the AI Job Testing architecture.
@@ -33,9 +43,8 @@ The main entrypoint for the application. This component is responsible for contr
   2. _Leaderboard API Server_ - Post AI Job stats to the Leaderboard API Server (see Figure 1)
 
 #### Livepeer Gateway
-
-The Livepeer Gateway must be configured to test a single orchestrator.
-To enable this behavior, the Gateway uses _Orch Webhoook URL_, _AI Session Timeout_ and _Orch Webhook Refresh Interval_.
+As the AI Job Tester iterates through the list of Orchestrators, it notifies the Livepeer Gateway about which Orchestrator to run the test scenarios against.
+To enable this behavior, the Gateway uses `orchWebhookUrl`, `aiSessionTimeout` and `webhookRefreshInterval`.
 
 The Livepeer Gateway was forked specifically to enable the configuration of these testing features.
 
@@ -91,7 +100,7 @@ The example file is located `configs/config.json`
 
 #### config.json
 
-This file configure the AI Job Tester application.
+This file configures the AI Job Tester application.
 
 | Config Entry               | Description                                                                                                                                                                                        |
 |----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -222,12 +231,13 @@ The use of docker is encouraged but not required.
 
 ## Run the Application
 
-To run the AI Job Tester application, You will need `docker compose`.
+To run the AI Job Tester application, you will need `docker compose`.
 
-The `docker-compose.yml` will allow you to run the applications needed: AI Job Tester and Livepeer Gateway
-You must create the following docker volumes (and configure them appropriately:
+The `docker-compose.yml` will allow you to run the applications needed: AI Job Tester and Livepeer Gateway.
+You must create the following docker volumes (and configure them appropriately)
 
 _ai-job-tester_ - stores the `configs/config.json` file needed to run `ai-job-tester`. You must configure the file and place in the volume's directory.
+
 `docker volume create ai-job-tester`
 
 _tester-gateway-lpData_ - The Livepeer Gateway's `.lpData` folder. You must configure the required livepeer files and place in the volume's directory.
@@ -239,7 +249,9 @@ _tester-gateway-lpData_ - The Livepeer Gateway's `.lpData` folder. You must conf
 The `ai-job-tester` docker image allows job scheduling using Linux `crontab`. `The docker-compose.yml` file has an environment variable to allow custom schedules.
 
 
-Example runs every hour on the 0 minute: `- CRONTAB_SCHEDULE=0 */1 * * *`
+Example runs every hour on the 0 minute: 
+
+`- CRONTAB_SCHEDULE=0 */1 * * *`
 
 ### docker-compose.yml
 ```
@@ -299,5 +311,3 @@ volumes:
 `-webhookRefreshInterval=0`
 `-aiSessionTimeout=0`
 `-orchWebhookUrl=http://ai-job-tester:7934/orchestrators`
-
-## Performance Scores????
