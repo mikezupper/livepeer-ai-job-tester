@@ -44,20 +44,11 @@ The main entrypoint for the application. This component is responsible for contr
 
 #### Livepeer Gateway
 As the AI Job Tester iterates through the list of Orchestrators, it notifies the Livepeer Gateway about which Orchestrator to run the test scenarios against.
-To enable this behavior, the Gateway uses `orchWebhookUrl`, `aiSessionTimeout` and `webhookRefreshInterval`.
+To enable this behavior, the Gateway uses `orchWebhookUrl`, `aiSessionTimeout`, `aiTesterGateway` and `webhookRefreshInterval`.
 
-The Livepeer Gateway was forked specifically to enable the configuration of these testing features.
+**_Important:_** The following pull request must be merged to run the AI Job Tester gateway
 
-**_Important:_** These changes are NOT currently in the main [go-livepeer repository](https://github.com/livepeer/go-livepeer).
-To be considered for merging, the code would need further design review that is NOT planned as part of the _Livepeer.Cloud SPE proposal #2_.
-
-The following git commits are required to run the Livepeer Gateway in "Job Tester Mode".  You can build and run the [Forked Branch](releases/livepeer.cloud/0.0.10-job-tester)
-
-Here are the individual commits:
-- Enable the Network Capabilities Endpoint
-  - [commit](https://github.com/mikezupper/go-livepeer/commit/be3ded29f8fd24eff4f3b7526cd6f941326d177d)
-- Allow the Gateway to override default timeout/cache intervals & ensure AISessionSelector is not caching
-  - [commit](https://github.com/mikezupper/go-livepeer/commit/91b48749b0524fe2527dfadaec2ed53288c4f32e)
+[#3236 - Enable Single Orchestrator AI Job Testing Support for Gateway Nodes](https://github.com/livepeer/go-livepeer/pull/3236)
 
 #### Leaderboard API Server
 For more details see the [docs](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support)
@@ -209,7 +200,7 @@ _**Note:**_ pipelines that require input assets (images or audio) the test files
       }
     },
     {
-      "name": "Large language model",
+      "name": "Llm",
       "uri": "llm",
       "capture_response": true,
       "contentType": "multipart/form-data",
@@ -269,12 +260,14 @@ services:
       - tester-gateway
 
   tester-gateway:
-    image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.10-livepeer-cloud-job-tester
+    image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.11
     restart: unless-stopped
     hostname: tester-gateway
     container_name: tester-gateway
     volumes:
       - tester-gateway-lpData:/root/.lpData
+    environment:
+      - LIVEPEER_OS_HTTP_TIMEOUT=8s
     command: '-ethUrl=YOUR_RPC_URL
               -ethPassword=/root/.lpData/eth-secret.txt
               -ethKeystorePath=/root/.lpData
@@ -291,7 +284,8 @@ services:
               -httpIngest=true
               -httpAddr=0.0.0.0:8935
               -orchMinLivepeerVersion=v0.7.9-ai.3
-              -discoveryTimeout=750ms
+              -aiTesterGateway=true
+              -discoveryTimeout=100ms
               -webhookRefreshInterval=0
               -aiSessionTimeout=0
               -orchWebhookUrl=http://ai-job-tester:7934/orchestrators
@@ -306,8 +300,12 @@ volumes:
 ```
 
 **_Note:_** Take note of the configuration flags that are needed to run a Livepeer Gateway in "Job Test Mode"
+Environment Variables:
+`LIVEPEER_OS_HTTP_TIMEOUT=8s`
 
-`-discoveryTimeout=750ms`
+Livepeer Startup Flags
+`-aiTesterGateway=true`
+`-discoveryTimeout=1000ms`
 `-webhookRefreshInterval=0`
 `-aiSessionTimeout=0`
 `-orchWebhookUrl=http://ai-job-tester:7934/orchestrators`
