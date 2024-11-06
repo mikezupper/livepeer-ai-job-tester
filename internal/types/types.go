@@ -42,38 +42,31 @@ type Orchestrator struct {
 	PricePerPixel              string  `json:"PricePerPixel"`
 }
 
-// WarmStatus represents the warm status of a pipeline, indicating if the pipeline
-// is preloaded and ready for faster execution.
-type WarmStatus struct {
-	Warm bool `json:"Warm"`
-}
-
-// Pipeline represents the structure of pipelines associated with an orchestrator.
-// It uses a map to represent pipeline names, with each containing another map of
-// models and their corresponding warm status.
-type Pipeline map[string]map[string]WarmStatus
-
-// Orchestrators represents a collection of orchestrators, where each orchestrator
-// contains a set of pipelines.
-type Orchestrators map[string]struct {
-	Pipelines Pipeline `json:"Pipelines"`
-}
-
-// SupportedPipelineStatus represents the status of a pipeline, with separate counts
-// for cold and warm instances.
-type SupportedPipelineStatus struct {
+// Status represents the status of a model with counts for cold and warm instances.
+type Status struct {
 	Cold int `json:"Cold"`
 	Warm int `json:"Warm"`
 }
 
-// SupportedPipelines represents the supported pipelines and their corresponding statuses,
-// organized by orchestrator and pipeline.
-type SupportedPipelines map[string]map[string]SupportedPipelineStatus
+// Model represents a model within a pipeline, including its name and status.
+type Model struct {
+	Name   string `json:"name"`
+	Status Status `json:"status"`
+}
 
-// Pipelines represents the top-level structure that contains both orchestrators
-// and the supported pipelines. This structure combines orchestrator data and
-// pipeline statuses.
+// Pipeline represents a pipeline, including its type and the models it contains.
+type Pipeline struct {
+	Type   string  `json:"type"`
+	Models []Model `json:"models"`
+}
+
+// Orchestrator represents an orchestrator, including its address and pipelines.
+type OrchestratorCapability struct {
+	Address   string     `json:"address"`
+	Pipelines []Pipeline `json:"pipelines"`
+}
+
+// Pipelines is the top-level structure that contains all orchestrators.
 type Pipelines struct {
-	Orchestrators      Orchestrators      `json:"orchestrators"`
-	SupportedPipelines SupportedPipelines `json:"supported_pipelines"`
+	Orchestrators []OrchestratorCapability `json:"orchestrators"`
 }

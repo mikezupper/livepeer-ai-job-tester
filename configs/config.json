@@ -89,7 +89,7 @@
       }
     },
     {
-      "name": "Large language model",
+      "name": "Llm",
       "uri": "llm",
       "capture_response": true,
       "contentType": "multipart/form-data",

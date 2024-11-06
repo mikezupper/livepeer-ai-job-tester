@@ -74,7 +74,7 @@ func (s *HTTPLivepeerService) FetchOrchestrators() ([]types.Orchestrator, error)
 // FetchPipelines fetches the available pipeline configurations from the Livepeer Gateway.
 // The response contains the pipelines data, which is unmarshalled into the Pipelines struct.
 func (s *HTTPLivepeerService) FetchPipelines() (*types.Pipelines, error) {
-	url := fmt.Sprintf("%s/getNetworkCapabilities", s.config.BroadcasterCliEndpoint)
+	url := fmt.Sprintf("%s/getOrchestratorAICapabilities", s.config.BroadcasterCliEndpoint)
 	resp, err := s.client.Get(url)
 	if err != nil {
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -101,16 +102,20 @@ func (ss *EmbeddedWebhookServer) RunTestJobs() error {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
 		return fmt.Errorf("failed to fetch pipelines: %w", err)
 	}
+	orchestratorMap := make(map[string]types.OrchestratorCapability)
 
-	log.Println("[EmbeddedWebhookServer] Pipelines Found ", len(pipelines.SupportedPipelines))
-
+	// Iterate over the Orchestrators slice and populate the map
+	for _, orchestrator := range pipelines.Orchestrators {
+		orchestratorMap[orchestrator.Address] = orchestrator
+	}
 	// Calculate the total number of expected jobs.
-	for _, orch := range orchestrators {
-		orchAddress := orch.Address
-
-		if orchPipelines, exists := pipelines.Orchestrators[orchAddress]; exists {
-			for pipelineName, models := range orchPipelines.Pipelines {
-				for modelName := range models {
+	for _, o := range orchestrators {
+		ethAddress := o.Address
+		if orchCapability, exists := orchestratorMap[ethAddress]; exists {
+			for _, pipeline := range orchCapability.Pipelines {
+				pipelineName := pipeline.Type
+				for _, model := range pipeline.Models {
+					modelName := model.Name
 					log.Println("Total Expected jobs increment ", pipelineName, modelName)
 					ss.jobTesterMetrics.IncrementExpectedTotalJobs()
 				}
@@ -119,15 +124,20 @@ func (ss *EmbeddedWebhookServer) RunTestJobs() error {
 	}
 
 	// Send test jobs to orchestrators
-	for _, orch := range orchestrators {
-		if orchPipelines, exists := pipelines.Orchestrators[orch.Address]; exists {
-			for pipelineName, models := range orchPipelines.Pipelines {
-				for modelName, warmStatus := range models {
-					log.Printf("[EmbeddedWebhookServer] sending AI Test Region [%s] Orch: %s ServiceURI: %s  Pipeline: %v Model: %s Warm: %v\n", ss.config.Region, orch.Address, orch.ServiceURI, pipelineName, modelName, warmStatus.Warm)
-					ss.SetOrchToTest(orch.ServiceURI)
-					err := ss.SendTestJob(orch.Address, orch.ServiceURI, pipelineName, modelName, warmStatus.Warm)
+	for _, o := range orchestrators {
+		ethAddress := o.Address
+		serviceURI := o.ServiceURI
+		if capability, exists := orchestratorMap[ethAddress]; exists {
+			for _, pipeline := range capability.Pipelines {
+				pipelineName := pipeline.Type
+				for _, model := range pipeline.Models {
+					modelName := model.Name
+					warmStatus := model.Status.Warm > 0
+					log.Printf("[EmbeddedWebhookServer] sending AI Test Region [%s] Orch: %s ServiceURI: %s  Pipeline: %v Model: %s Warm: %v\n", ss.config.Region, ethAddress, serviceURI, pipelineName, modelName, warmStatus)
+					ss.SetOrchToTest(serviceURI)
+					err := ss.SendTestJob(ethAddress, serviceURI, pipelineName, modelName, warmStatus)
 					if err != nil {
-						log.Printf("[EmbeddedWebhookServer] Failed sending test job. Region [%s] Orch: [%s] pipeline [%s] model [%s] - Err [%v]\n", ss.config.Region, orch.Address, pipelineName, modelName, err)
+						log.Printf("[EmbeddedWebhookServer] Failed sending test job. Region [%s] Orch: [%s] pipeline [%s] model [%s] - Err [%v]\n", ss.config.Region, ethAddress, pipelineName, modelName, err)
 					}
 				}
 			}
