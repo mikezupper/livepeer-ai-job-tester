@@ -5,8 +5,8 @@
   "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "my-secret-key",
-  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterJobEndpoint": "http://localhost:8935",
+  "broadcasterCliEndpoint": "http://localhost:7935",
   "broadcasterRequestToken": "None",
   "pipelines": [
     {
@@ -96,6 +96,25 @@
       "parameters": {
         "max_tokens": 256,
         "prompt": "how many characters are in an ethereum address?"
+      }
+    },
+    {
+      "name": "Text to speech",
+      "uri": "text-to-speech",
+      "capture_response": true,
+      "contentType": "application/json",
+      "parameters": {
+        "description": "Jordan's voice with a very close recording that almost has no background noise.",
+        "text": "In less than an hour, aircraft from here will join others from around the world, and you will be launching the largest aerial battle in the history of mankind... Mankind. That word should have new meaning for all of us today. We can't be consumed by our petty differences anymore. We will be united in our common interests. Perhaps it's fate that today is the Fourth of July, and you will once again be fighting for our freedom. "
+      }
+    },
+    {
+      "name": "Image to text",
+      "uri": "image-to-text",
+      "capture_response": true,
+      "contentType": "multipart/form-data",
+      "parameters": {
+        "prompt": "alert and ready for danger"
       }
     }
   ]
