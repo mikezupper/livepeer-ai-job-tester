@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o jobtester ./cmd/ai-job-tes
 
 # Use a minimal base image to run the application (Alpine Linux)
 FROM alpine:latest
-RUN apk add busybox-extras
+RUN apk add busybox-extras ffmpeg
 
 ENV PATH=$PATH:/app/
 # Set working directory

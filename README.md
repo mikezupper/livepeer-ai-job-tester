@@ -105,8 +105,44 @@ This file configures the AI Job Tester application.
 | `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint.                                                                                                                                                      |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
 | `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission. |
+| `liveVideo.ingestURL`      | Base RTMP ingest URL used when pushing the test stream (the tester appends `aiJobTesterStream`). |
+| `liveVideo.playbackURL`    | Base RTMP playback URL used by `ffprobe` to measure output (the tester appends `aiJobTesterStream-out`). |
+| `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests.
+| `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. |
+| `liveVideo.probeGracePeriodSeconds` | Delay before `ffprobe` starts, allowing the Gateway to warm the live pipeline. |
+| `liveVideo.orchMapping`    | Map of orchestrator addresses to their live URIs, overriding on-chain service URIs for live video runs. |
 
 _**Note:**_ pipelines that require input assets (images or audio) the test files are located in the `tests-assets/` folder. When adding new pipelines, make sure to update the ai job submission logic in `internal/server/server.go` `SendTestJob` function.
+
+### Live Video Pipeline Configuration
+
+Each live-enabled pipeline must also mark the configuration with `"live": true` and provide any runtime parameters required by the Gateway.
+
+### Orchestrator Discovery for Live Jobs
+
+The Gateway cannot rely on the on-chain Service Registry to discover live AI capabilities and all Orchestrator URIs. Populate `configs/live-video-orchestrators.json` with the exact orchestrator addresses that should receive live video tests. The Gateway reads this file and uses the entries to validate capabilities before the tester runs a job.  This is used in combination with `liveVideo.orchMapping` to find the Orchestrator and override the published service URI with a list of appropraite URIs to test.
+
+### Mediamtx Integration
+
+`configs/mediamtx/mediamtx.yml` defines two relevant RTMP paths:
+
+- `aiJobTesterStream` – Uses `runOnReady` to invoke the Gateway CLI and start a live video session as soon as the tester pushes the input RTMP stream.
+- `aiJobTesterStream-out` – Records the transformed output when recording is enabled, allowing you to inspect the final video produced by the orchestrator.
+
+Ensure the Mediamtx container shares the same network namespace as the Gateway so these hooks can execute successfully.  Also, you must map a volume for the recordings if you want them to persists outside the container.
+
+### testMode
+
+Set `"testMode": true` in `configs/config.json` to bypass real Gateway and Leaderboard calls. In this mode the tester immediately runs against a small set of mock orchestrators and prints the statistics rather than publishing them.
+
+### Live AI Video Data Flow
+
+1. The tester determines whether a job is live by inspecting the pipeline configuration (`live: true`). Live jobs push the static fixture video to the Gateway via RTMP using the parameters defined in the pipeline block.
+2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using the `aiJobTesterStream` key.
+3. The tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
+4. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
+5. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count) before being posted to the Leaderboard or logged in `testMode`.
+
 ##### Example Configuration
 ```json
 {
@@ -207,6 +243,16 @@ _**Note:**_ pipelines that require input assets (images or audio) the test files
       "parameters": {
         "max_tokens": 256,
         "prompt": "how many characters are in an ethereum address?"
+      }
+    }
+    {
+      "name": "Live video to video",
+      "uri": "live-video-to-video",
+      "capture_response": false,
+      "contentType": "application/json",
+      "live": true,
+      "parameters": {
+        "pipeline": "streamdiffusion-sdxl"
       }
     }
   ]

@@ -7,24 +7,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"livepeer-job-tester/internal/config"
-	"livepeer-job-tester/internal/services"
-	"livepeer-job-tester/internal/types"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"livepeer-job-tester/internal/config"
+	"livepeer-job-tester/internal/ffmpeg"
+	"livepeer-job-tester/internal/services"
+	"livepeer-job-tester/internal/types"
 )
 
 // ServerService defines the interface for starting the server and sending test jobs.
 // It abstracts the operations needed to interact with orchestrators and pipelines.
 type ServerService interface {
-	StartServer(addr string) error
-	SendTestJob(orchEthAddr, orchServiceUri, pipeline, model string, modelIsWarm bool) error
+	StartServer(ctx context.Context, addr string) error
+	SendTestJob(ctx context.Context, orchEthAddr, orchServiceUri, pipeline, model string, modelIsWarm bool) error
 }
 
 // EmbeddedWebhookServer represents the server responsible for managing job testing and orchestrator interactions.
@@ -37,6 +40,8 @@ type EmbeddedWebhookServer struct {
 	orchestrators    []types.Orchestrator       // List of orchestrators fetched from the Livepeer API.
 	orchToTest       string                     // Currently selected orchestrator for testing.
 	jobTesterMetrics *services.JobTesterMetrics // Metrics service for tracking job tester results.
+	ffmpegClient     ffmpeg.Client
+	logger           *slog.Logger
 }
 
 // NewEmbeddedWebhookServer creates a new instance of EmbeddedWebhookServer with the provided configuration, HTTP client, and Livepeer service.
@@ -45,20 +50,32 @@ func NewEmbeddedWebhookServer(
 	config *config.Config,
 	client *http.Client,
 	livepeerService services.LivepeerService,
+	ffmpegClient ffmpeg.Client,
+	logger *slog.Logger,
 ) *EmbeddedWebhookServer {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if ffmpegClient == nil {
+		ffmpegClient = ffmpeg.NewClient(logger)
+	}
+
 	return &EmbeddedWebhookServer{
 		config:           config,
 		client:           client,
 		livepeerService:  livepeerService,
+		ffmpegClient:     ffmpegClient,
+		logger:           logger,
 		jobTesterMetrics: services.NewJobTesterMetrics(),
 	}
 }
 
 // StartServer starts the HTTP server and listens on the specified address.
 // It sets up the web server handlers and manages the shutdown process.
-func (ss *EmbeddedWebhookServer) StartServer(addr string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (ss *EmbeddedWebhookServer) StartServer(ctx context.Context, addr string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	mux := ss.webServerHandlers()
 	srv := &http.Server{
@@ -66,110 +83,164 @@ func (ss *EmbeddedWebhookServer) StartServer(addr string) error {
 		Handler: mux,
 	}
 
-	// Start a goroutine to handle graceful shutdown.
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		log.Println("[StartServer] Shutting down web server")
+		ss.logger.InfoContext(ctx, "shutting down web server")
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("[StartServer] failed to shutdown web server: %v\n", err)
+			ss.logger.ErrorContext(ctx, "failed to shutdown web server", slog.Any("error", err))
 		}
 	}()
 
-	log.Printf("[StartServer] Web server listening at %s\n", addr)
+	ss.logger.InfoContext(ctx, "web server listening", slog.String("addr", addr))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("[StartServer] ListenAndServe error: %w", err)
+		return fmt.Errorf("listen and serve error: %w", err)
 	}
 	return nil
 }
 
 // RunTestJobs fetches orchestrators and pipelines from the Livepeer API and sends test jobs to each orchestrator.
 // It increments job metrics and generates a JSON report of the job tester results.
-func (ss *EmbeddedWebhookServer) RunTestJobs() error {
-	// Fetch orchestrators
-	orchestrators, err := ss.livepeerService.FetchOrchestrators()
+func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	orchestrators, err := ss.livepeerService.FetchOrchestrators(ctx)
 	if err != nil {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
 		return fmt.Errorf("failed to fetch orchestrators: %w", err)
 	}
-	log.Println("[EmbeddedWebhookServer] Orchestrators Found ", len(orchestrators))
+	ss.logger.InfoContext(ctx, "orchestrators fetched", slog.Int("count", len(orchestrators)))
+	//make sure to update the orchestrators in a thread-safe manner
+	//as it could be read by the web server handlers from the gateway
+	ss.lock.Lock()
 	ss.orchestrators = orchestrators
+	ss.lock.Unlock()
 
 	// Fetch pipelines
-	pipelines, err := ss.livepeerService.FetchPipelines()
+	pipelines, err := ss.livepeerService.FetchPipelines(ctx)
 	if err != nil {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
 		return fmt.Errorf("failed to fetch pipelines: %w", err)
 	}
-	orchestratorMap := make(map[string]types.OrchestratorCapability)
 
-	// Iterate over the Orchestrators slice and populate the map
+	orchestratorMap := make(map[string]types.OrchestratorCapability)
 	for _, orchestrator := range pipelines.Orchestrators {
 		orchestratorMap[orchestrator.Address] = orchestrator
+		ss.logger.DebugContext(ctx, "capabilities loaded",
+			slog.String("orchestrator", orchestrator.Address),
+			slog.Int("pipelines", len(orchestrator.Pipelines)))
 	}
-	// Calculate the total number of expected jobs.
+
 	for _, o := range orchestrators {
 		ethAddress := o.Address
-		if orchCapability, exists := orchestratorMap[ethAddress]; exists {
-			for _, pipeline := range orchCapability.Pipelines {
-				pipelineName := pipeline.Type
-				for _, model := range pipeline.Models {
-					modelName := model.Name
-					log.Println("Total Expected jobs increment ", pipelineName, modelName)
-					ss.jobTesterMetrics.IncrementExpectedTotalJobs()
+		capability, exists := orchestratorMap[ethAddress]
+		if !exists {
+			ss.logger.WarnContext(ctx, "orchestrator missing capability definition", slog.String("orchestrator", ethAddress))
+			continue
+		}
+
+		for _, pipeline := range capability.Pipelines {
+			for _, model := range pipeline.Models {
+				ss.jobTesterMetrics.IncrementExpectedTotalJobs()
+				ss.logger.DebugContext(ctx, "queued test job",
+					slog.String("orchestrator", ethAddress),
+					slog.String("pipeline", pipeline.Type),
+					slog.String("model", model.Name))
+			}
+		}
+	}
+
+	ss.logger.InfoContext(ctx, "expected jobs computed", slog.Int("total", ss.jobTesterMetrics.ExpectedTotalJobs))
+
+	for _, orchestrator := range orchestrators {
+		ethAddress := orchestrator.Address
+		serviceURI := orchestrator.ServiceURI
+		capability, exists := orchestratorMap[ethAddress]
+		if !exists {
+			continue
+		}
+
+		for _, pipeline := range capability.Pipelines {
+			pipelineName := pipeline.Type
+			for _, model := range pipeline.Models {
+				modelName := model.Name
+				warmStatus := model.Status.Warm > 0
+
+				if mapped := ss.lookupLiveVideoOverride(ethAddress); mapped != "" {
+					ss.logger.DebugContext(ctx, "overriding service URI for live pipeline",
+						slog.String("orchestrator", ethAddress),
+						slog.String("service_uri", mapped))
+					serviceURI = mapped
+				}
+
+				ss.SetOrchToTest(serviceURI)
+				ss.logger.InfoContext(ctx, "sending test job",
+					slog.String("region", ss.config.Region),
+					slog.String("orchestrator", ethAddress),
+					slog.String("service_uri", serviceURI),
+					slog.String("pipeline", pipelineName),
+					slog.String("model", modelName),
+					slog.Bool("warm", warmStatus))
+
+				if err := ss.SendTestJob(ctx, ethAddress, serviceURI, pipelineName, modelName, warmStatus); err != nil {
+					ss.logger.ErrorContext(ctx, "failed to send test job",
+						slog.String("region", ss.config.Region),
+						slog.String("orchestrator", ethAddress),
+						slog.String("pipeline", pipelineName),
+						slog.String("model", modelName),
+						slog.Any("error", err))
 				}
 			}
 		}
 	}
 
-	// Send test jobs to orchestrators
-	for _, o := range orchestrators {
-		ethAddress := o.Address
-		serviceURI := o.ServiceURI
-		if capability, exists := orchestratorMap[ethAddress]; exists {
-			for _, pipeline := range capability.Pipelines {
-				pipelineName := pipeline.Type
-				for _, model := range pipeline.Models {
-					modelName := model.Name
-					warmStatus := model.Status.Warm > 0
-					log.Printf("[EmbeddedWebhookServer] sending AI Test Region [%s] Orch: %s ServiceURI: %s  Pipeline: %v Model: %s Warm: %v\n", ss.config.Region, ethAddress, serviceURI, pipelineName, modelName, warmStatus)
-					ss.SetOrchToTest(serviceURI)
-					err := ss.SendTestJob(ethAddress, serviceURI, pipelineName, modelName, warmStatus)
-					if err != nil {
-						log.Printf("[EmbeddedWebhookServer] Failed sending test job. Region [%s] Orch: [%s] pipeline [%s] model [%s] - Err [%v]\n", ss.config.Region, ethAddress, pipelineName, modelName, err)
-					}
-				}
-			}
-		}
-	}
+	ss.logger.InfoContext(ctx, "test jobs completed", slog.Int("total_jobs", ss.jobTesterMetrics.TotalJobs))
 
-	// Generate the JSON report
 	statsJSON, err := json.Marshal(ss.jobTesterMetrics)
 	if err != nil {
-		log.Println("Error marshalling job stats to JSON:", err)
+		ss.logger.ErrorContext(ctx, "failed to marshal job stats", slog.Any("error", err))
 		return err
 	}
-	log.Println("Job Stats Report:")
-	log.Println(string(statsJSON))
+	ss.logger.InfoContext(ctx, "job stats report", slog.String("payload", string(statsJSON)))
 	return nil
+}
+
+func (ss *EmbeddedWebhookServer) lookupLiveVideoOverride(orchestratorAddr string) string {
+	liveCfg := ss.config.LiveVideo
+	if liveCfg == nil || liveCfg.OrchMapping == nil {
+		return ""
+	}
+
+	for mappedEthAddr, mappedURIs := range liveCfg.OrchMapping {
+		if strings.EqualFold(mappedEthAddr, orchestratorAddr) && len(mappedURIs) > 0 {
+			return strings.ToLower(mappedURIs[0])
+		}
+	}
+
+	return ""
 }
 
 // SendTestJob sends a test job to the specified orchestrator and pipeline, including the model name and warm status.
 // It updates the job tester metrics and processes the response, handling errors and capturing response data.
-func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeline, model string, modelIsWarm bool) error {
-	// Increment total jobs metric.
+func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, orchServiceUri, pipeline, model string, modelIsWarm bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	ss.jobTesterMetrics.IncrementTotalJobs()
 
 	// Find pipeline parameters from the config.
 	cfgPipeline, found := ss.findParametersByPipelineName(pipeline)
 	if !found {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-		return fmt.Errorf("[SendTestJob] pipeline not found in configuration file: %s", pipeline)
+		return fmt.Errorf("pipeline not found in configuration file: %s", pipeline)
 	}
 
 	// Copy pipeline parameters and add the model ID.
-	copiedParams := make(map[string]interface{})
+	copiedParams := make(map[string]any)
 	for key, value := range cfgPipeline.Parameters {
 		copiedParams[key] = value
 	}
@@ -179,7 +250,7 @@ func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeli
 	input, err := json.Marshal(copiedParams)
 	if err != nil {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-		return fmt.Errorf("[SendTestJob] failed to create job parameters for pipeline %s: %w", pipeline, err)
+		return fmt.Errorf("failed to create job parameters for pipeline %s: %w", pipeline, err)
 	}
 
 	// Initialize stats for the test job.
@@ -195,14 +266,29 @@ func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeli
 	}
 	stats.InputParameters = string(input)
 
-	// Send the HTTP request.
+	ss.logger.InfoContext(ctx, "sending test job to Orchestrator",
+		slog.String("orchestrator_uri", orchServiceUri),
+		slog.String("pipeline", pipeline),
+		slog.String("model", model),
+		slog.Bool("live", cfgPipeline.Live))
+
+	if cfgPipeline.Live {
+		if err := ss.handleLiveVideoTest(ctx, &stats, copiedParams); err != nil {
+			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
+			ss.logger.ErrorContext(ctx, "live video test failed", slog.Any("error", err))
+			return err
+		}
+		return nil
+	}
+
+	// Send the HTTP request
 	url := fmt.Sprintf("%s/%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri)
 	var req *http.Request
 	if cfgPipeline.ContentType == "application/json" {
-		req, err = http.NewRequest("POST", url, bytes.NewBuffer(input))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(input))
 		if err != nil {
 			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-			return fmt.Errorf("[SendTestJob] failed to create new HTTP request: %w", err)
+			return fmt.Errorf("failed to create new HTTP request: %w", err)
 		}
 		req.Header.Set("Content-Type", cfgPipeline.ContentType)
 		req.Header.Set("Authorization", "Bearer "+ss.config.BroadcasterRequestToken)
@@ -210,8 +296,9 @@ func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeli
 		req, err = ss.createMultipartRequest(url, copiedParams, cfgPipeline.Uri)
 		if err != nil {
 			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-			return fmt.Errorf("[SendTestJob] failed to create multipart request: %w", err)
+			return fmt.Errorf("failed to create multipart request: %w", err)
 		}
+		req = req.WithContext(ctx)
 	}
 
 	// Measure round-trip time.
@@ -222,22 +309,23 @@ func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeli
 	// Handle request errors.
 	if err != nil {
 		stats.RoundTripTime = jobTime.Sub(startTime).Seconds()
-		return ss.handleRequestError(err, "failed to process the job", &stats)
+		return ss.handleRequestError(ctx, err, "failed to process the job", &stats)
 	}
 	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
+
+	body, err := io.ReadAll(res.Body)
 	readBodyTime := time.Now()
 	if err != nil {
 		stats.RoundTripTime = readBodyTime.Sub(startTime).Seconds()
-		return ss.handleRequestError(err, "failed to read response body", &stats)
+		return ss.handleRequestError(ctx, err, "failed to read response body", &stats)
 	}
 	stats.RoundTripTime = readBodyTime.Sub(startTime).Seconds()
 
 	// Check status code and handle errors.
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
+	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		//capture the error response from gateway
 		stats.ResponsePayload = string(body)
-		return ss.handleStatusCodeError(res.StatusCode, string(body), &stats)
+		return ss.handleStatusCodeError(ctx, res.StatusCode, string(body), &stats)
 	}
 
 	// Capture response if necessary.
@@ -248,7 +336,102 @@ func (ss *EmbeddedWebhookServer) SendTestJob(orchEthAddr, orchServiceUri, pipeli
 	}
 
 	// Finalize stats and report success.
-	return ss.handleSuccess(&stats)
+	return ss.handleSuccess(ctx, &stats)
+}
+
+func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats *types.Stats, params map[string]any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	startTime := time.Now()
+
+	liveCfg := ss.config.LiveVideo
+	if liveCfg == nil {
+		stats.RoundTripTime = time.Since(startTime).Seconds()
+		return ss.handleRequestError(ctx, errors.New("live video configuration missing"), "live video configuration not provided", stats)
+	}
+
+	// Live video stream key used for the test
+	const streamKey = "aiJobTesterStream"
+	ingestURL, playbackURL, err := ss.resolveLiveVideoURLs(liveCfg, streamKey, params)
+	if err != nil {
+		stats.RoundTripTime = time.Since(startTime).Seconds()
+		return ss.handleRequestError(ctx, err, "invalid live video configuration", stats)
+	}
+
+	ss.logger.InfoContext(ctx, "running live video stream",
+		slog.String("ingest_url", ingestURL),
+		slog.String("playback_url", playbackURL))
+
+	metrics, err := ss.ffmpegClient.RunStream(ctx, ingestURL, playbackURL, liveCfg.TestVideoPath, ffmpeg.StreamOptions{
+		GracePeriod:  time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
+		TestDuration: time.Duration(liveCfg.TestDurationSeconds) * time.Second,
+	})
+	if err != nil {
+		stats.RoundTripTime = time.Since(startTime).Seconds()
+		return ss.handleRequestError(ctx, err, "failed to execute live video stream", stats)
+	}
+
+	stats.RoundTripTime = time.Since(startTime).Seconds()
+	stats.AverageFPS = metrics.AverageFPS()
+	stats.AverageLatency = metrics.AverageLatency()
+	stats.TotalFrames = metrics.TotalFrames()
+	stats.TestDuration = metrics.DurationSeconds()
+
+	ss.logger.InfoContext(ctx, "live video test completed",
+		slog.String("stream_key", streamKey),
+		slog.Int("total_frames", metrics.TotalFrames()),
+		slog.Float64("avg_fps", metrics.AverageFPS()),
+		slog.Float64("avg_latency", metrics.AverageLatency()),
+		slog.Float64("duration", metrics.DurationSeconds()))
+
+	return ss.handleSuccess(ctx, stats)
+}
+
+func (ss *EmbeddedWebhookServer) resolveLiveVideoURLs(cfg *config.LiveVideoConfig, streamKey string, params map[string]any) (string, string, error) {
+	ingest := strings.TrimSpace(cfg.IngestURL)
+	playback := strings.TrimSpace(cfg.PlaybackURL)
+	if ingest == "" || playback == "" {
+		return "", "", errors.New("rtmp ingest or playback URL missing")
+	}
+
+	ingest = buildStreamURL(ingest, streamKey, params)
+	playback = playback + "/" + streamKey + "-out"
+	return ingest, playback, nil
+}
+
+func buildStreamURL(base, streamKey string, params map[string]any) string {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return trimmed
+	}
+
+	// Add streamKey to the URL
+	if strings.Contains(trimmed, "{streamKey}") {
+		trimmed = strings.ReplaceAll(trimmed, "{streamKey}", streamKey)
+	} else if strings.HasSuffix(trimmed, "/") {
+		trimmed += streamKey
+	} else {
+		trimmed = fmt.Sprintf("%s/%s", trimmed, streamKey)
+	}
+
+	// Add all params as individual query parameters
+	if len(params) > 0 {
+		u, err := url.Parse(trimmed)
+		if err == nil {
+			q := u.Query()
+			for key, value := range params {
+				q.Set(key, fmt.Sprintf("%v", value))
+			}
+			// Add stream key to the query as "streamId=<streamKey>"
+			q.Set("streamId", streamKey)
+			u.RawQuery = q.Encode()
+			trimmed = u.String()
+		}
+	}
+
+	return trimmed
 }
 
 // webServerHandlers sets up the HTTP handlers for the server, including the /orchestrators endpoint.
@@ -274,12 +457,18 @@ func (ss *EmbeddedWebhookServer) handleOrchestrators(w http.ResponseWriter, r *h
 	var orchs []orch
 	orchToTest := ss.GetOrchToTest()
 	if orchToTest == "" {
+		// get a read lock to access the orchestrators slice
+		// as it could be updated by the job tester concurrently
+		ss.lock.RLock()
 		for _, o := range ss.orchestrators {
 			orchs = append(orchs, orch{o.ServiceURI})
 		}
+		ss.lock.RUnlock()
 	} else {
 		orchs = []orch{{orchToTest}}
 	}
+
+	ss.logger.InfoContext(r.Context(), "returning orchestrators", slog.Int("count", len(orchs)))
 
 	res, err := json.Marshal(orchs)
 	if err != nil {
@@ -359,7 +548,8 @@ func (ss *EmbeddedWebhookServer) createMultipartRequest(url string, params map[s
 
 // handleRequestError handles errors that occur while processing a request.
 // It updates job stats and posts the error data to the Leaderboard API.
-func (ss *EmbeddedWebhookServer) handleRequestError(err error, message string, stats *types.Stats) error {
+
+func (ss *EmbeddedWebhookServer) handleRequestError(ctx context.Context, err error, message string, stats *types.Stats) error {
 	newError := types.Error{
 		ErrorCode: fmt.Errorf("%w", err).Error(),
 		Message:   message,
@@ -367,19 +557,29 @@ func (ss *EmbeddedWebhookServer) handleRequestError(err error, message string, s
 	}
 	stats.Errors = append(stats.Errors, newError)
 	ss.jobTesterMetrics.IncrementTotalJobsFailed()
-	return ss.livepeerService.PostStats(stats)
+	ss.logger.ErrorContext(ctx, message,
+		slog.Any("error", err),
+		slog.String("pipeline", stats.Pipeline),
+		slog.String("model", stats.Model),
+		slog.String("orchestrator", stats.Orchestrator))
+	return ss.livepeerService.PostStats(ctx, stats)
 }
 
 // handleSuccess handles successful completion of a test job by updating job stats and posting them to the Leaderboard API.
-func (ss *EmbeddedWebhookServer) handleSuccess(stats *types.Stats) error {
+
+func (ss *EmbeddedWebhookServer) handleSuccess(ctx context.Context, stats *types.Stats) error {
 	stats.SuccessRate = 1
 	ss.jobTesterMetrics.IncrementTotalJobsPassed()
-	return ss.livepeerService.PostStats(stats)
+	ss.logger.InfoContext(ctx, "job succeeded",
+		slog.String("pipeline", stats.Pipeline),
+		slog.String("model", stats.Model),
+		slog.String("orchestrator", stats.Orchestrator))
+	return ss.livepeerService.PostStats(ctx, stats)
 }
 
 // handleStatusCodeError handles errors related to non-2xx status codes in HTTP responses.
 // It updates job stats and posts the error data to the Leaderboard API.
-func (ss *EmbeddedWebhookServer) handleStatusCodeError(statusCode int, message string, stats *types.Stats) error {
+func (ss *EmbeddedWebhookServer) handleStatusCodeError(ctx context.Context, statusCode int, message string, stats *types.Stats) error {
 	newError := types.Error{
 		ErrorCode: strconv.Itoa(statusCode),
 		Message:   message,
@@ -387,7 +587,12 @@ func (ss *EmbeddedWebhookServer) handleStatusCodeError(statusCode int, message s
 	}
 	stats.Errors = append(stats.Errors, newError)
 	ss.jobTesterMetrics.IncrementTotalJobsFailed()
-	return ss.livepeerService.PostStats(stats)
+	ss.logger.ErrorContext(ctx, "job failed with non-success status",
+		slog.Int("status_code", statusCode),
+		slog.String("pipeline", stats.Pipeline),
+		slog.String("model", stats.Model),
+		slog.String("orchestrator", stats.Orchestrator))
+	return ss.livepeerService.PostStats(ctx, stats)
 }
 
 // SetOrchToTest sets the orchestrator currently being tested.

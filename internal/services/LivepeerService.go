@@ -2,24 +2,26 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log/slog"
+	"net/http"
+
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/types"
-	"net/http"
 )
 
 // LivepeerService defines the interface for interacting with the Livepeer Gateway and Leaderboard API.
 // It includes methods to fetch orchestrators, fetch pipelines, and post stats.
 type LivepeerService interface {
-	FetchOrchestrators() ([]types.Orchestrator, error) // Fetches orchestrators from the Livepeer Gateway.
-	FetchPipelines() (*types.Pipelines, error)         // Fetches pipeline data from the Livepeer Gateway.
-	PostStats(stats *types.Stats) error                // Posts stats data to the Leaderboard API.
+	FetchOrchestrators(ctx context.Context) ([]types.Orchestrator, error) // Fetches orchestrators from the Livepeer Gateway.
+	FetchPipelines(ctx context.Context) (*types.Pipelines, error)         // Fetches pipeline data from the Livepeer Gateway.
+	PostStats(ctx context.Context, stats *types.Stats) error              // Posts stats data to the Leaderboard API.
 }
 
 // HTTPLivepeerService is an implementation of the LivepeerService interface.
@@ -27,81 +29,135 @@ type LivepeerService interface {
 type HTTPLivepeerService struct {
 	client *http.Client   // HTTP client for making requests.
 	config *config.Config // Configuration containing API endpoints and secrets.
+	logger *slog.Logger
 }
 
 // NewHTTPLivepeerService creates a new instance of HTTPLivepeerService with the given HTTP client and config.
 // The returned service can be used to interact with the Livepeer Gateway and Leaderboard API.
-func NewHTTPLivepeerService(client *http.Client, config *config.Config) *HTTPLivepeerService {
-	return &HTTPLivepeerService{client: client, config: config}
+func NewHTTPLivepeerService(client *http.Client, config *config.Config, logger *slog.Logger) *HTTPLivepeerService {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &HTTPLivepeerService{client: client, config: config, logger: logger}
 }
 
 // FetchOrchestrators fetches the list of registered orchestrators from the Livepeer Gateway.
-// It filters out inactive orchestrators and those without a valid ServiceURI.
-func (s *HTTPLivepeerService) FetchOrchestrators() ([]types.Orchestrator, error) {
+// It filters out inactive orchestrators, those without a valid ServiceURI, and applies any test mode filtering based on the configuration.
+func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.Orchestrator, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.logger.InfoContext(ctx, "fetching registered orchestrators")
+	if s.config.TestMode {
+		orchStr := `[{"Address":"0xdef1c70578b2b5e8589a42e26980687fc5153079","ServiceURI":"https://compute.speedybird.xyz:443","LastRewardRound":3947,"RewardCut":220000,"FeeShare":50000,"DelegatedStake":97524394215341228748737,"ActivationRound":3287,"DeactivationRound":115792089237316195423570985008687907853269984665640564039457584007913129639935,"LastActiveStakeUpdateRound":3948,"Active":true,"Status":"Registered","PricePerPixel":"0"},{"Address":"0x3bbe84023c11c4874f493d70b370d26390e3c580","ServiceURI":"https://dexpeer.code4.us:8935","LastRewardRound":3947,"RewardCut":300000,"FeeShare":500000,"DelegatedStake":92738696234060805088161,"ActivationRound":2467,"DeactivationRound":115792089237316195423570985008687907853269984665640564039457584007913129639935,"LastActiveStakeUpdateRound":3948,"Active":true,"Status":"Registered","PricePerPixel":"1841/20"}]`
+		var orchestrators []types.Orchestrator
+		if err := json.Unmarshal([]byte(orchStr), &orchestrators); err != nil {
+			return nil, err
+		}
+		s.logger.InfoContext(ctx, "returning orchestrators from test mode", slog.Int("count", len(orchestrators)))
+		return orchestrators, nil
+	}
+
 	url := fmt.Sprintf("%s/registeredOrchestrators", s.config.BroadcasterCliEndpoint)
-	resp, err := s.client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("[FetchOrchestrators] response contained a non-200 status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetchOrchestrators: unexpected status code %d", resp.StatusCode)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
 	var orchestrators []types.Orchestrator
-	err = json.Unmarshal(body, &orchestrators)
-	if err != nil {
+	if err := json.Unmarshal(body, &orchestrators); err != nil {
 		return nil, err
 	}
 
-	// Filter out orchestrators that are not active or have an empty ServiceURI.
-	var filteredOrchestrators []types.Orchestrator
+	var filtered []types.Orchestrator
 	for _, orchestrator := range orchestrators {
 		if orchestrator.Active && orchestrator.ServiceURI != "" {
-			filteredOrchestrators = append(filteredOrchestrators, orchestrator)
+			filtered = append(filtered, orchestrator)
 		}
 	}
 
-	return filteredOrchestrators, nil
+	s.logger.InfoContext(ctx, "orchestrators filtered",
+		slog.Int("fetched", len(orchestrators)),
+		slog.Int("active", len(filtered)))
+
+	return filtered, nil
 }
 
 // FetchPipelines fetches the available pipeline configurations from the Livepeer Gateway.
 // The response contains the pipelines data, which is unmarshalled into the Pipelines struct.
-func (s *HTTPLivepeerService) FetchPipelines() (*types.Pipelines, error) {
+func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipelines, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	url := fmt.Sprintf("%s/getOrchestratorAICapabilities", s.config.BroadcasterCliEndpoint)
-	resp, err := s.client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("[FetchPipelines] response contained a non-200 status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetchPipelines: unexpected status code %d", resp.StatusCode)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
 	var pipelines types.Pipelines
-	err = json.Unmarshal(body, &pipelines)
-	if err != nil {
+	if err := json.Unmarshal(body, &pipelines); err != nil {
 		return nil, err
 	}
+
+	s.logger.DebugContext(ctx, "pipelines fetched", slog.Int("orchestrators", len(pipelines.Orchestrators)))
 
 	return &pipelines, nil
 }
 
 // PostStats posts job statistics to the Leaderboard API.
 // The stats data is signed with an HMAC hash for authentication before being sent in a POST request.
-func (s *HTTPLivepeerService) PostStats(stats *types.Stats) error {
+
+func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Check if TestMode is enabled in the config.
+	if s.config.TestMode {
+		s.logger.InfoContext(ctx, "test mode active - skipping stats post",
+			slog.String("region", stats.Region),
+			slog.String("orchestrator", stats.Orchestrator),
+			slog.String("pipeline", stats.Pipeline),
+			slog.String("model", stats.Model),
+			slog.Float64("success_rate", float64(stats.SuccessRate)),
+			slog.Float64("round_trip", stats.RoundTripTime),
+			slog.Float64("avg_fps", stats.AverageFPS),
+			slog.Float64("avg_latency", stats.AverageLatency))
+		return nil
+	}
 	// Marshal the stats data into JSON format.
 	input, err := json.Marshal(stats)
 	if err != nil {
@@ -109,7 +165,7 @@ func (s *HTTPLivepeerService) PostStats(stats *types.Stats) error {
 	}
 
 	// Create a new POST request with the stats data.
-	req, err := http.NewRequest("POST", s.config.MetricsApiEndpoint, bytes.NewBuffer(input))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.config.MetricsApiEndpoint, bytes.NewBuffer(input))
 	if err != nil {
 		return err
 	}
@@ -129,10 +185,18 @@ func (s *HTTPLivepeerService) PostStats(stats *types.Stats) error {
 
 	// Check the response status code.
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return errors.New(fmt.Sprintf("invalid response status code from POST STATS [%v]", res.StatusCode))
+		return fmt.Errorf("invalid response status code from POST STATS [%v]", res.StatusCode)
 	}
 
 	// Log the successful posting of stats.
-	fmt.Printf("Posted stats for region=[%s] orchestrator=[%s] pipeline=[%s] model=[%s] success=[%v]  latency=[%v] \n", stats.Region, stats.Orchestrator, stats.Pipeline, stats.Model, stats.SuccessRate, stats.RoundTripTime)
+	s.logger.InfoContext(ctx, "posted stats",
+		slog.String("region", stats.Region),
+		slog.String("orchestrator", stats.Orchestrator),
+		slog.String("pipeline", stats.Pipeline),
+		slog.String("model", stats.Model),
+		slog.Float64("success_rate", float64(stats.SuccessRate)),
+		slog.Float64("round_trip", stats.RoundTripTime),
+		slog.Float64("avg_fps", stats.AverageFPS),
+		slog.Float64("avg_latency", stats.AverageLatency))
 	return nil
 }

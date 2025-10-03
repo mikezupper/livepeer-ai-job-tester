@@ -3,7 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 )
 
@@ -11,16 +11,19 @@ import (
 // It includes settings for the region, job type, internal server,
 // metrics API, broadcaster endpoints, and a list of pipelines.
 type Config struct {
-	Region                   string     `json:"region"`
-	JobType                  string     `json:"jobType"`
-	InternalWebServerPort    string     `json:"internalWebServerPort"`
-	InternalWebServerAddress string     `json:"internalWebServerAddress"`
-	MetricsApiEndpoint       string     `json:"metricsApiEndpoint"`
-	MetricsSecret            string     `json:"metricsSecret"`
-	BroadcasterJobEndpoint   string     `json:"broadcasterJobEndpoint"`
-	BroadcasterCliEndpoint   string     `json:"broadcasterCliEndpoint"`
-	BroadcasterRequestToken  string     `json:"broadcasterRequestToken"`
-	Pipelines                []Pipeline `json:"pipelines"`
+	Region                   string           `json:"region"`
+	JobType                  string           `json:"jobType"`
+	InternalWebServerPort    string           `json:"internalWebServerPort"`
+	InternalWebServerAddress string           `json:"internalWebServerAddress"`
+	MetricsApiEndpoint       string           `json:"metricsApiEndpoint"`
+	MetricsSecret            string           `json:"metricsSecret"`
+	BroadcasterJobEndpoint   string           `json:"broadcasterJobEndpoint"`
+	BroadcasterCliEndpoint   string           `json:"broadcasterCliEndpoint"`
+	BroadcasterRequestToken  string           `json:"broadcasterRequestToken"`
+	Pipelines                []Pipeline       `json:"pipelines"`
+	LiveVideo                *LiveVideoConfig `json:"liveVideo,omitempty"`
+	TestMode                 bool             `json:"testMode,omitempty"`
+	Logger                   *LoggerConfig    `json:"logger,omitempty"`
 }
 
 // Pipeline represents a data processing pipeline configuration.
@@ -32,6 +35,24 @@ type Pipeline struct {
 	CaptureResponse bool                   `json:"capture_response"`
 	ContentType     string                 `json:"contentType"`
 	Parameters      map[string]interface{} `json:"parameters"`
+	Live            bool                   `json:"live,omitempty"`
+}
+
+// LiveVideoConfig captures configuration specific to live video pipeline tests.
+type LiveVideoConfig struct {
+	IngestURL               string              `json:"ingestURL"`
+	PlaybackURL             string              `json:"playbackURL"`
+	TestVideoPath          string              `json:"testVideoPath"`
+	TestDurationSeconds     int                 `json:"testDurationSeconds"`
+	ProbeGracePeriodSeconds int                 `json:"probeGracePeriodSeconds"`
+	OrchMapping             map[string][]string `json:"orchMapping,omitempty"`
+}
+
+// LoggerConfig exposes runtime log configuration knobs.
+type LoggerConfig struct {
+	Level   string            `json:"level"`
+	Format  string            `json:"format,omitempty"`
+	Modules map[string]string `json:"modules,omitempty"`
 }
 
 // Loader defines the interface for loading a configuration from a file.
@@ -58,7 +79,7 @@ func (l *JSONConfigLoader) Load(filePath string) (*Config, error) {
 	defer file.Close()
 
 	// Read the file contents
-	byteValue, err := ioutil.ReadAll(file)
+	byteValue, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("[JSONConfigLoader::LoadConfig] error reading JSON file: %w", err)
 	}
