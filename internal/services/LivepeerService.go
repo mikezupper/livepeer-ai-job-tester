@@ -154,8 +154,7 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 			slog.String("model", stats.Model),
 			slog.Float64("success_rate", float64(stats.SuccessRate)),
 			slog.Float64("round_trip", stats.RoundTripTime),
-			slog.Float64("avg_fps", stats.AverageFPS),
-			slog.Float64("avg_latency", stats.AverageLatency))
+			slog.String("response_payload", stats.ResponsePayload))
 		return nil
 	}
 	// Marshal the stats data into JSON format.
@@ -195,8 +194,6 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 		slog.String("pipeline", stats.Pipeline),
 		slog.String("model", stats.Model),
 		slog.Float64("success_rate", float64(stats.SuccessRate)),
-		slog.Float64("round_trip", stats.RoundTripTime),
-		slog.Float64("avg_fps", stats.AverageFPS),
-		slog.Float64("avg_latency", stats.AverageLatency))
+		slog.Float64("round_trip", stats.RoundTripTime))
 	return nil
 }

@@ -19,7 +19,6 @@ import (
 
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/ffmpeg"
-	status "livepeer-job-tester/internal/gateway/status"
 	"livepeer-job-tester/internal/services"
 	"livepeer-job-tester/internal/types"
 )
@@ -53,14 +52,12 @@ func NewEmbeddedWebhookServer(
 	livepeerService services.LivepeerService,
 	ffmpegClient ffmpeg.Client,
 	logger *slog.Logger,
-) *EmbeddedWebhookServer {
+) (*EmbeddedWebhookServer, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if ffmpegClient == nil {
-		statusLogger := logger.With(slog.String("component", "gateway-status"))
-		ffmpegLogger := logger.With(slog.String("component", "ffmpeg"))
-		ffmpegClient = ffmpeg.NewClient(ffmpegLogger, status.NewClient(nil, statusLogger))
+		return nil, errors.New("ffmpeg client is required")
 	}
 
 	return &EmbeddedWebhookServer{
@@ -70,7 +67,7 @@ func NewEmbeddedWebhookServer(
 		ffmpegClient:     ffmpegClient,
 		logger:           logger,
 		jobTesterMetrics: services.NewJobTesterMetrics(),
-	}
+	}, nil
 }
 
 // StartServer starts the HTTP server and listens on the specified address.
@@ -443,8 +440,7 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		slog.Float64("avg_latency", metrics.AverageLatency()),
 		slog.Float64("duration", metrics.DurationSeconds()),
 		slog.Float64("initial_latency", metrics.InitialLatency()),
-		slog.Float64("gateway_ready_seconds", metrics.GatewayReadySeconds()),
-		slog.Float64("stream_score", stats.StreamScore))
+		slog.Float64("gateway_ready_seconds", metrics.GatewayReadySeconds()))
 
 	return nil
 }
@@ -503,20 +499,22 @@ func applyMetricsToStats(stats *types.Stats, metrics *ffmpeg.Metrics, cfg *confi
 	if stats == nil || metrics == nil {
 		return
 	}
-
-	stats.AverageFPS = metrics.AverageFPS()
-	stats.AverageLatency = metrics.AverageLatency()
-	stats.TotalFrames = metrics.TotalFrames()
-	stats.TestDuration = metrics.DurationSeconds()
-	stats.InitialLatency = metrics.InitialLatency()
-	stats.GatewayReadySeconds = metrics.GatewayReadySeconds()
+	stats.ResponsePayload = fmt.Sprintf(`{"message":"Live Video Test Completed","total_frames":%d,"average_fps":%.2f,"average_latency":%.2f,"test_duration":%.2f,"initial_latency":%.2f,"gateway_ready_secs":%.2f}`,
+		metrics.TotalFrames(),
+		metrics.AverageFPS(),
+		metrics.AverageLatency(),
+		metrics.DurationSeconds(),
+		metrics.InitialLatency(),
+		metrics.GatewayReadySeconds(),
+	)
 
 	var targetFPS, maxInitialLatency float64
 	if cfg != nil {
 		targetFPS = cfg.TargetFPS
 		maxInitialLatency = cfg.MaxInitialLatencySeconds
 	}
-	stats.StreamScore = metrics.Score(targetFPS, maxInitialLatency)
+	metricsScore := metrics.Score(targetFPS, maxInitialLatency)
+	stats.RoundTripTime = metricsScore
 }
 
 // webServerHandlers sets up the HTTP handlers for the server, including the /orchestrators endpoint.

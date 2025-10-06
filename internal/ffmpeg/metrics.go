@@ -1,12 +1,14 @@
 package ffmpeg
 
 import (
-	"encoding/json"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var ErrNoFrames = errors.New("ffmpeg: probe produced no frames")
 
 // Metrics captures summary data for a stream playback run.
 type Metrics struct {
@@ -131,31 +133,6 @@ func (m *Metrics) Score(targetFPS, maxInitialLatency float64) float64 {
 	}
 
 	return math.Max(0, math.Min(1, fpsWeight*fpsScore+latencyWeight*latencyScore))
-}
-
-func (m *Metrics) ToResponsePayload(startResponse string) string {
-	payload := map[string]any{
-		"total_frames":            m.totalFrames,
-		"average_fps":             roundFloat(m.averageFPS, 2),
-		"average_latency_seconds": roundFloat(m.averageLatency, 3),
-		"duration_seconds":        roundFloat(m.durationSeconds, 2),
-		"gateway_ready_seconds":   roundFloat(m.gatewayReadySeconds, 3),
-	}
-
-	if startResponse != "" {
-		var parsed any
-		if err := json.Unmarshal([]byte(startResponse), &parsed); err == nil {
-			payload["start_response"] = parsed
-		} else {
-			payload["start_response_raw"] = startResponse
-		}
-	}
-
-	output, err := json.Marshal(payload)
-	if err != nil {
-		return startResponse
-	}
-	return string(output)
 }
 
 func parseFramePTS(line string) (float64, bool) {

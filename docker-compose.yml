@@ -13,7 +13,7 @@ services:
       - tester-gateway
 
   tester-gateway:
-    image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.9-livepeer-cloud-job-tester
+    image: tztcloud/go-livepeer:v0.8.6
     restart: unless-stopped
     hostname: ai-tester-gateway
     container_name: ai-tester-gateway

@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -44,19 +43,32 @@ const (
 	defaultMaxMetricAttempts  = 20
 )
 
-var errNoFrames = errors.New("live probe produced no frames")
+var (
+	ErrGatewayTimeout = errors.New("ffmpeg: gateway readiness timeout")
+	ErrStreamAborted  = errors.New("ffmpeg: stream aborted")
+)
 
 type client struct {
 	logger       *slog.Logger
+	probeLogger  *slog.Logger
 	statusClient StreamStatusClient
 }
 
 // NewClient constructs a Client instance using the provided logger and status client for structured output.
-func NewClient(logger *slog.Logger, statusClient StreamStatusClient) Client {
-	if logger == nil {
-		logger = slog.Default()
+func NewClient(logger *slog.Logger, statusClient StreamStatusClient) (Client, error) {
+	if statusClient == nil {
+		return nil, errors.New("ffmpeg: status client is required")
 	}
-	return &client{logger: logger, statusClient: statusClient}
+	base := logger
+	if base == nil {
+		base = slog.Default()
+	}
+	base = base.With(slog.String("component", "ffmpeg"))
+	return &client{
+		logger:       base,
+		probeLogger:  base.With(slog.String("subsystem", "probe")),
+		statusClient: statusClient,
+	}, nil
 }
 
 func (o StreamOptions) withDefaults() StreamOptions {
@@ -97,22 +109,22 @@ func (c *client) waitForReadiness(ctx context.Context, ffmpegErrCh <-chan error,
 
 	select {
 	case res := <-readyCh:
+		readyCancel()
 		if res.err != nil {
 			if errors.Is(res.err, status.ErrTimeout) {
-				return 0, fmt.Errorf("gateway did not report stream ready within %s", opts.StatusPollTimeout)
+				return 0, fmt.Errorf("%w after %s", ErrGatewayTimeout, opts.StatusPollTimeout)
 			}
-			return 0, res.err
+			return 0, fmt.Errorf("gateway readiness failed: %w", res.err)
 		}
 		log.InfoContext(ctx, "gateway reported live stream ready", slog.Duration("wait", res.duration))
-		readyCancel()
 		return res.duration, nil
 	case ffmpegErr := <-ffmpegErrCh:
 		readyCancel()
 		go func() { <-readyCh }()
 		if ffmpegErr == nil {
-			ffmpegErr = errors.New("ffmpeg exited before readiness completed")
+			ffmpegErr = ErrStreamAborted
 		}
-		return 0, fmt.Errorf("ffmpeg exited before stream became ready: %w", ffmpegErr)
+		return 0, fmt.Errorf("%w: %v", ErrStreamAborted, ffmpegErr)
 	case <-ctx.Done():
 		readyCancel()
 		res := <-readyCh
@@ -135,9 +147,9 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 			return nil, ctx.Err()
 		case exitErr := <-ffmpegErrCh:
 			if exitErr != nil && !errors.Is(exitErr, context.Canceled) {
-				return nil, fmt.Errorf("ffmpeg exited before metrics were collected: %w", exitErr)
+				return nil, fmt.Errorf("%w: %v", ErrStreamAborted, exitErr)
 			}
-			return nil, fmt.Errorf("ffmpeg exited before metrics were collected")
+			return nil, ErrStreamAborted
 		default:
 		}
 
@@ -158,9 +170,7 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 			slog.Int("max_attempts", opts.MaxMetricAttempts),
 			slog.Any("error", metricsErr))
 
-		// Retry regardless of the error, up to the max attempts
 		if opts.MetricRetryDelay > 0 {
-			log.InfoContext(ctx, "retrying metrics probe", slog.Duration("retry_delay", opts.MetricRetryDelay))
 			time.Sleep(opts.MetricRetryDelay)
 		}
 	}
@@ -176,7 +186,7 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 		return nil, fmt.Errorf("unable to access test video file (%s): %w", testVideoPath, err)
 	}
 
-	log := c.log()
+	log := c.logger.With(slog.String("operation", "RunStream"))
 	log.InfoContext(ctx, "starting live video stream", slog.String("ingest", ingestURL), slog.String("playback", playbackURL))
 
 	push, err := startStreamPush(testVideoPath, ingestURL, log)
@@ -242,7 +252,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 	args := buildFFProbeArgs(playbackURL)
 
-	c.log().DebugContext(ctx, "ffprobe command", slog.String("args", strings.Join(args, " ")))
+	c.probeLogger.DebugContext(ctx, "ffprobe command", slog.String("args", strings.Join(args, " ")))
 
 	cmd := exec.CommandContext(probeCtx, "ffprobe", args...)
 
@@ -257,7 +267,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 		cancelProbe()
 		return nil, err
 	}
-	pipeProcessOutput(ctx, stderr, c.logger, "ffprobe")
+	pipeProcessOutput(ctx, stderr, c.probeLogger, "ffprobe")
 
 	if err := cmd.Start(); err != nil {
 		cancelProbe()
@@ -275,7 +285,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		c.log().DebugContext(ctx, "raw ffprobe output", slog.String("line", line))
+		c.probeLogger.DebugContext(ctx, "raw ffprobe output", slog.String("line", line))
 
 		select {
 		case <-ctx.Done():
@@ -309,7 +319,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 	}
 
 	if metrics.totalFrames == 0 {
-		return nil, errNoFrames
+		return nil, ErrNoFrames
 	}
 
 	metrics.finalize(duration)
@@ -340,22 +350,4 @@ func buildFFProbeArgs(playbackURL string) []string {
 		"-read_intervals", "%+30",
 		playbackURL,
 	}
-}
-
-func (c *client) log() *slog.Logger {
-	pc, _, _, ok := runtime.Caller(1)
-	if !ok {
-		return c.logger
-	}
-	fn := runtime.FuncForPC(pc)
-	name := "unknown"
-	if fn != nil {
-		full := fn.Name()
-		if idx := strings.LastIndex(full, "."); idx >= 0 && idx+1 < len(full) {
-			name = full[idx+1:]
-		} else {
-			name = full
-		}
-	}
-	return c.logger.With(slog.String("fn", name))
 }
