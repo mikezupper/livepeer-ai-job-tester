@@ -13,17 +13,19 @@
     "level": "INFO",
     "format": "TEXT",
     "modules": {
-      "app": "debug",
-      "server": "debug",
-      "ffmpeg": "debug"
+      "app": "info",
+      "server": "info",
+      "ffmpeg": "info"
     }
   },
   "liveVideo": {
     "ingestURL": "rtmp://mediamtx:1935",
     "playbackURL": " rtmp://mediamtx:1935",
     "testVideoPath": "test-assets/live-test-video.mp4",
-    "testDurationSeconds": 30,
-    "probeGracePeriodSeconds": 10,
+    "testDurationSeconds": 10,
+    "probeGracePeriodSeconds": 20,
+    "targetFPS": 12,
+    "maxInitialLatencySeconds": 8,
     "orchMapping": {
       "0xdef1c70578b2b5e8589a42e26980687fc5153079": ["https://stream2.speedybird.xyz:18936"]
     }

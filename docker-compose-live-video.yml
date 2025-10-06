@@ -53,6 +53,11 @@ services:
   mediamtx:
     image: livepeerci/mediamtx
     container_name: live-video-to-video-mediamtx
+    # ports:
+    # DO NOT EXPOSE PORTS TO THE INTERNET UNLESS YOU KNOW WHAT YOU ARE DOING/ENABLE AUTH
+    #   - "1935:1935"   # RTMP
+    #   - "8888:8888"   # HLS
+    #   - "9999:9999"   # API
     volumes:
       - ./configs/mediamtx/mediamtx.yml:/mediamtx.yml
       # Add the below path mount if you want to save recordings to host

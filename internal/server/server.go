@@ -143,12 +143,25 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 		}
 
 		for _, pipeline := range capability.Pipelines {
-			for _, model := range pipeline.Models {
-				ss.jobTesterMetrics.IncrementExpectedTotalJobs()
-				ss.logger.DebugContext(ctx, "queued test job",
+			pipelineName := pipeline.Type
+			urisToTest, overrideApplied := ss.resolveServiceURIs(o, pipelineName)
+			if len(urisToTest) == 0 {
+				ss.logger.WarnContext(ctx, "no service URIs resolved for orchestrator pipeline",
 					slog.String("orchestrator", ethAddress),
-					slog.String("pipeline", pipeline.Type),
-					slog.String("model", model.Name))
+					slog.String("pipeline", pipelineName))
+				continue
+			}
+
+			for _, model := range pipeline.Models {
+				for _, uri := range urisToTest {
+					ss.jobTesterMetrics.IncrementExpectedTotalJobs()
+					ss.logger.DebugContext(ctx, "queued test job",
+						slog.String("orchestrator", ethAddress),
+						slog.String("service_uri", uri),
+						slog.String("pipeline", pipelineName),
+						slog.String("model", model.Name),
+						slog.Bool("override", overrideApplied))
+				}
 			}
 		}
 	}
@@ -157,7 +170,6 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 
 	for _, orchestrator := range orchestrators {
 		ethAddress := orchestrator.Address
-		serviceURI := orchestrator.ServiceURI
 		capability, exists := orchestratorMap[ethAddress]
 		if !exists {
 			continue
@@ -165,33 +177,41 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 
 		for _, pipeline := range capability.Pipelines {
 			pipelineName := pipeline.Type
+			urisToTest, overrideApplied := ss.resolveServiceURIs(orchestrator, pipelineName)
+			if len(urisToTest) == 0 {
+				continue
+			}
+
 			for _, model := range pipeline.Models {
 				modelName := model.Name
 				warmStatus := model.Status.Warm > 0
 
-				if mapped := ss.lookupLiveVideoOverride(ethAddress); mapped != "" {
-					ss.logger.DebugContext(ctx, "overriding service URI for live pipeline",
-						slog.String("orchestrator", ethAddress),
-						slog.String("service_uri", mapped))
-					serviceURI = mapped
-				}
+				for _, serviceURI := range urisToTest {
+					if overrideApplied {
+						ss.logger.DebugContext(ctx, "overriding service URI for orchestrator",
+							slog.String("orchestrator", ethAddress),
+							slog.String("service_uri", serviceURI),
+							slog.String("pipeline", pipelineName))
+					}
 
-				ss.SetOrchToTest(serviceURI)
-				ss.logger.InfoContext(ctx, "sending test job",
-					slog.String("region", ss.config.Region),
-					slog.String("orchestrator", ethAddress),
-					slog.String("service_uri", serviceURI),
-					slog.String("pipeline", pipelineName),
-					slog.String("model", modelName),
-					slog.Bool("warm", warmStatus))
-
-				if err := ss.SendTestJob(ctx, ethAddress, serviceURI, pipelineName, modelName, warmStatus); err != nil {
-					ss.logger.ErrorContext(ctx, "failed to send test job",
+					ss.SetOrchToTest(serviceURI)
+					ss.logger.InfoContext(ctx, "sending test job",
 						slog.String("region", ss.config.Region),
 						slog.String("orchestrator", ethAddress),
+						slog.String("service_uri", serviceURI),
 						slog.String("pipeline", pipelineName),
 						slog.String("model", modelName),
-						slog.Any("error", err))
+						slog.Bool("warm", warmStatus))
+
+					if err := ss.SendTestJob(ctx, ethAddress, serviceURI, pipelineName, modelName, warmStatus); err != nil {
+						ss.logger.ErrorContext(ctx, "failed to send test job",
+							slog.String("region", ss.config.Region),
+							slog.String("orchestrator", ethAddress),
+							slog.String("service_uri", serviceURI),
+							slog.String("pipeline", pipelineName),
+							slog.String("model", modelName),
+							slog.Any("error", err))
+					}
 				}
 			}
 		}
@@ -208,19 +228,49 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 	return nil
 }
 
-func (ss *EmbeddedWebhookServer) lookupLiveVideoOverride(orchestratorAddr string) string {
+func (ss *EmbeddedWebhookServer) lookupLiveVideoOverrides(orchestratorAddr string) []string {
 	liveCfg := ss.config.LiveVideo
 	if liveCfg == nil || liveCfg.OrchMapping == nil {
-		return ""
+		return nil
 	}
 
 	for mappedEthAddr, mappedURIs := range liveCfg.OrchMapping {
-		if strings.EqualFold(mappedEthAddr, orchestratorAddr) && len(mappedURIs) > 0 {
-			return strings.ToLower(mappedURIs[0])
+		if !strings.EqualFold(strings.ToLower(mappedEthAddr), strings.ToLower(orchestratorAddr)) {
+			continue
+		}
+
+		var overrides []string
+		for _, uri := range mappedURIs {
+			trimmed := strings.TrimSpace(uri)
+			if trimmed == "" {
+				continue
+			}
+			overrides = append(overrides, strings.ToLower(trimmed))
+		}
+
+		if len(overrides) > 0 {
+			return overrides
+		}
+		break
+	}
+
+	return nil
+}
+
+func (ss *EmbeddedWebhookServer) resolveServiceURIs(orchestrator types.Orchestrator, pipelineName string) ([]string, bool) {
+	if cfg, ok := ss.findParametersByPipelineName(pipelineName); ok && cfg.Live {
+		overrides := ss.lookupLiveVideoOverrides(orchestrator.Address)
+		if len(overrides) > 0 {
+			return overrides, true
 		}
 	}
 
-	return ""
+	uri := strings.TrimSpace(orchestrator.ServiceURI)
+	if uri == "" {
+		return nil, false
+	}
+
+	return []string{uri}, false
 }
 
 // SendTestJob sends a test job to the specified orchestrator and pipeline, including the model name and warm status.
@@ -278,7 +328,7 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 			ss.logger.ErrorContext(ctx, "live video test failed", slog.Any("error", err))
 			return err
 		}
-		return nil
+		return ss.handleSuccess(ctx, &stats)
 	}
 
 	// Send the HTTP request
@@ -351,6 +401,10 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		stats.RoundTripTime = time.Since(startTime).Seconds()
 		return ss.handleRequestError(ctx, errors.New("live video configuration missing"), "live video configuration not provided", stats)
 	}
+	videoPath := strings.TrimSpace(liveCfg.TestVideoPath)
+	if videoPath == "" {
+		videoPath = "test-assets/live-test-video.mp4"
+	}
 
 	// Live video stream key used for the test
 	const streamKey = "aiJobTesterStream"
@@ -364,7 +418,7 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		slog.String("ingest_url", ingestURL),
 		slog.String("playback_url", playbackURL))
 
-	metrics, err := ss.ffmpegClient.RunStream(ctx, ingestURL, playbackURL, liveCfg.TestVideoPath, ffmpeg.StreamOptions{
+	metrics, err := ss.ffmpegClient.RunStream(ctx, ingestURL, playbackURL, videoPath, ffmpeg.StreamOptions{
 		GracePeriod:  time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
 		TestDuration: time.Duration(liveCfg.TestDurationSeconds) * time.Second,
 	})
@@ -378,15 +432,19 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 	stats.AverageLatency = metrics.AverageLatency()
 	stats.TotalFrames = metrics.TotalFrames()
 	stats.TestDuration = metrics.DurationSeconds()
+	stats.InitialLatency = metrics.InitialLatency()
+	stats.StreamScore = metrics.Score(liveCfg.TargetFPS, liveCfg.MaxInitialLatencySeconds, liveCfg.ProbeGracePeriodSeconds)
 
 	ss.logger.InfoContext(ctx, "live video test completed",
 		slog.String("stream_key", streamKey),
 		slog.Int("total_frames", metrics.TotalFrames()),
 		slog.Float64("avg_fps", metrics.AverageFPS()),
 		slog.Float64("avg_latency", metrics.AverageLatency()),
-		slog.Float64("duration", metrics.DurationSeconds()))
+		slog.Float64("duration", metrics.DurationSeconds()),
+		slog.Float64("initial_latency", metrics.InitialLatency()),
+		slog.Float64("stream_score", stats.StreamScore))
 
-	return ss.handleSuccess(ctx, stats)
+	return nil
 }
 
 func (ss *EmbeddedWebhookServer) resolveLiveVideoURLs(cfg *config.LiveVideoConfig, streamKey string, params map[string]any) (string, string, error) {

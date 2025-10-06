@@ -17,6 +17,8 @@ type Stats struct {
 	AverageLatency  float64 `json:"average_latency_seconds,omitempty"`
 	TotalFrames     int     `json:"total_frames,omitempty"`
 	TestDuration    float64 `json:"test_duration_seconds,omitempty"`
+	InitialLatency  float64 `json:"initial_latency_seconds,omitempty"`
+	StreamScore     float64 `json:"stream_performance_score,omitempty"`
 	Errors          []Error `json:"errors"`
 	Timestamp       int64   `json:"timestamp"`
 }

@@ -21,3 +21,8 @@
 # Go workspace file
 go.work
 
+# runtime folders and files generated when running the tester from this project
+mediamtx-recordings
+# binary output file
+ai-job-tester
+
