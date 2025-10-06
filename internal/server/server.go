@@ -19,6 +19,7 @@ import (
 
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/ffmpeg"
+	status "livepeer-job-tester/internal/gateway/status"
 	"livepeer-job-tester/internal/services"
 	"livepeer-job-tester/internal/types"
 )
@@ -57,7 +58,9 @@ func NewEmbeddedWebhookServer(
 		logger = slog.Default()
 	}
 	if ffmpegClient == nil {
-		ffmpegClient = ffmpeg.NewClient(logger)
+		statusLogger := logger.With(slog.String("component", "gateway-status"))
+		ffmpegLogger := logger.With(slog.String("component", "ffmpeg"))
+		ffmpegClient = ffmpeg.NewClient(ffmpegLogger, status.NewClient(nil, statusLogger))
 	}
 
 	return &EmbeddedWebhookServer{
@@ -414,8 +417,7 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		return ss.handleRequestError(ctx, err, "invalid live video configuration", stats)
 	}
 
-	statusEndpoint := fmt.Sprintf("%s/live/video-to-video/%s/status",
-		strings.TrimSuffix(ss.config.BroadcasterJobEndpoint, "/"), streamKey)
+	statusEndpoint := buildLiveStatusEndpoint(ss.config.BroadcasterJobEndpoint, streamKey)
 
 	ss.logger.InfoContext(ctx, "running live video stream",
 		slog.String("ingest_url", ingestURL),
@@ -432,13 +434,7 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 	}
 
 	stats.RoundTripTime = time.Since(startTime).Seconds()
-	stats.AverageFPS = metrics.AverageFPS()
-	stats.AverageLatency = metrics.AverageLatency()
-	stats.TotalFrames = metrics.TotalFrames()
-	stats.TestDuration = metrics.DurationSeconds()
-	stats.InitialLatency = metrics.InitialLatency()
-	stats.GatewayReadySeconds = metrics.GatewayReadySeconds()
-	stats.StreamScore = metrics.Score(liveCfg.TargetFPS, liveCfg.MaxInitialLatencySeconds)
+	applyMetricsToStats(stats, metrics, liveCfg)
 
 	ss.logger.InfoContext(ctx, "live video test completed",
 		slog.String("stream_key", streamKey),
@@ -496,6 +492,31 @@ func buildStreamURL(base, streamKey string, params map[string]any) string {
 	}
 
 	return trimmed
+}
+
+func buildLiveStatusEndpoint(base, streamKey string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(base), "/")
+	return fmt.Sprintf("%s/live/video-to-video/%s/status", trimmed, streamKey)
+}
+
+func applyMetricsToStats(stats *types.Stats, metrics *ffmpeg.Metrics, cfg *config.LiveVideoConfig) {
+	if stats == nil || metrics == nil {
+		return
+	}
+
+	stats.AverageFPS = metrics.AverageFPS()
+	stats.AverageLatency = metrics.AverageLatency()
+	stats.TotalFrames = metrics.TotalFrames()
+	stats.TestDuration = metrics.DurationSeconds()
+	stats.InitialLatency = metrics.InitialLatency()
+	stats.GatewayReadySeconds = metrics.GatewayReadySeconds()
+
+	var targetFPS, maxInitialLatency float64
+	if cfg != nil {
+		targetFPS = cfg.TargetFPS
+		maxInitialLatency = cfg.MaxInitialLatencySeconds
+	}
+	stats.StreamScore = metrics.Score(targetFPS, maxInitialLatency)
 }
 
 // webServerHandlers sets up the HTTP handlers for the server, including the /orchestrators endpoint.

@@ -12,6 +12,7 @@ import (
 
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/ffmpeg"
+	"livepeer-job-tester/internal/gateway/status"
 	"livepeer-job-tester/internal/logging"
 	"livepeer-job-tester/internal/server"
 	"livepeer-job-tester/internal/services"
@@ -54,8 +55,8 @@ func main() {
 
 	// Initialize the Livepeer service with the HTTP client and loaded configuration.
 	livepeerService := services.NewHTTPLivepeerService(client, cfg, loggerManager.Logger("livepeer"))
-	//initialize ffmpeg client
-	ffmpegClient := ffmpeg.NewClient(loggerManager.Logger("ffmpeg"))
+	statusClient := status.NewClient(nil, loggerManager.Logger("gateway-status"))
+	ffmpegClient := ffmpeg.NewClient(loggerManager.Logger("ffmpeg"), statusClient)
 	// Create and start the embedded webhook server.
 	webhookServer := server.NewEmbeddedWebhookServer(cfg, client, livepeerService, ffmpegClient, loggerManager.Logger("server"))
 
