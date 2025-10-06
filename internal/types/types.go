@@ -4,23 +4,24 @@ package types
 // the region, pipeline used, model details, success rate, and round-trip time.
 // It also stores errors encountered during the test and a timestamp.
 type Stats struct {
-	Region          string  `json:"region"`
-	Pipeline        string  `json:"pipeline"`
-	Model           string  `json:"model"`
-	ModelIsWarm     bool    `json:"model_is_warm"`
-	InputParameters string  `json:"input_parameters"`
-	ResponsePayload string  `json:"response_payload"`
-	Orchestrator    string  `json:"orchestrator"`
-	SuccessRate     int     `json:"success_rate"`
-	RoundTripTime   float64 `json:"round_trip_time"`
-	AverageFPS      float64 `json:"average_fps,omitempty"`
-	AverageLatency  float64 `json:"average_latency_seconds,omitempty"`
-	TotalFrames     int     `json:"total_frames,omitempty"`
-	TestDuration    float64 `json:"test_duration_seconds,omitempty"`
-	InitialLatency  float64 `json:"initial_latency_seconds,omitempty"`
-	StreamScore     float64 `json:"stream_performance_score,omitempty"`
-	Errors          []Error `json:"errors"`
-	Timestamp       int64   `json:"timestamp"`
+	Region              string  `json:"region"`
+	Pipeline            string  `json:"pipeline"`
+	Model               string  `json:"model"`
+	ModelIsWarm         bool    `json:"model_is_warm"`
+	InputParameters     string  `json:"input_parameters"`
+	ResponsePayload     string  `json:"response_payload"`
+	Orchestrator        string  `json:"orchestrator"`
+	SuccessRate         int     `json:"success_rate"`
+	RoundTripTime       float64 `json:"round_trip_time"`
+	AverageFPS          float64 `json:"average_fps,omitempty"`
+	AverageLatency      float64 `json:"average_latency_seconds,omitempty"`
+	TotalFrames         int     `json:"total_frames,omitempty"`
+	TestDuration        float64 `json:"test_duration_seconds,omitempty"`
+	InitialLatency      float64 `json:"initial_latency_seconds,omitempty"`
+	StreamScore         float64 `json:"stream_performance_score,omitempty"`
+	GatewayReadySeconds float64 `json:"gateway_ready_seconds,omitempty"`
+	Errors              []Error `json:"errors"`
+	Timestamp           int64   `json:"timestamp"`
 }
 
 // Error represents the details of an error encountered during a test job.

@@ -109,7 +109,7 @@ This file configures the AI Job Tester application.
 | `liveVideo.playbackURL`    | Base RTMP playback URL used by `ffprobe` to measure output (the tester appends `aiJobTesterStream-out`). |
 | `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests. |
 | `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. |
-| `liveVideo.probeGracePeriodSeconds` | Delay before `ffprobe` starts, allowing the Gateway to warm the live pipeline. |
+| `liveVideo.probeGracePeriodSeconds` | Maximum seconds to wait for the Gateway `/live/video-to-video/{stream}/status` endpoint to report the stream as ready before failing the test. |
 | `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs. |
 | `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream. |
 | `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream. |
@@ -141,9 +141,10 @@ Set `"testMode": true` in `configs/config.json` to bypass real Gateway and Leade
 
 1. The tester determines whether a job is live by inspecting the pipeline configuration (`live: true`). Live jobs push the static fixture video to the Gateway via RTMP using the parameters defined in the pipeline block.
 2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using the `aiJobTesterStream` key.
-3. The tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
-4. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
-5. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, initial latency, and a normalized performance score) before being posted to the Leaderboard or logged in `testMode`.
+3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `probeGracePeriodSeconds` elapses.
+4. Once the stream is ready the tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
+5. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
+6. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, readiness duration, initial latency, and a normalized performance score) before being posted to the Leaderboard or logged in `testMode`.
 
 ### Live Video Metrics & Scoring
 
@@ -152,15 +153,16 @@ Live runs produce a set of metrics that are derived directly from the sampled fr
 - **Frame arrival window** – Each `ffprobe` frame provides the presentation timestamp (PTS) and the wall-clock arrival time. The tester records both, using the first/last PTS as the primary duration source and falling back to arrival timing or the configured test duration if necessary.
 - **Average FPS** – Calculated from the number of frames divided by the PTS-derived duration so the result is independent of buffering behaviour in `ffmpeg`/`ffprobe`.
 - **Average latency** – Per-frame latency is measured as `arrivalSinceIngest - pts`; the average represents the end-to-end delay once the stream is flowing.
-- **Initial latency** – The time from ingest start until the first frame arrives. Align `probeGracePeriodSeconds` with expected startup costs so this value reflects post-warmup readiness.
+- **Gateway readiness** – Time spent polling `/live/video-to-video/{stream}/status` until the Gateway returns `200 OK`. This duration is emitted as `gateway_ready_seconds` and is subtracted from the latency score so legitimate warm-up time is not penalized.
+- **Initial latency** – The time from ingest start until the first frame arrives. The latency score uses the latency beyond the measured Gateway warm-up window.
 
 The normalized score that surfaces in the stats payload combines the above measurements:
 
 - **FPS component** – Compares the measured FPS to `liveVideo.targetFPS` and clamps the ratio to `0..1`.
-- **Latency component** – Compares initial latency to `liveVideo.maxInitialLatencySeconds`, also clamped to `0..1`. If the max is omitted, latency defaults to a perfect score.
+- **Latency component** – Compares the latency observed after the Gateway reported readiness to `liveVideo.maxInitialLatencySeconds`, also clamped to `0..1`. If the max is omitted, latency defaults to a perfect score.
 - **Final score** – A weighted average (`0.6 * FPS + 0.4 * latency`) stored in `stats.stream_performance_score`.
 
-When configuring a region, keep `probeGracePeriodSeconds` and `maxInitialLatencySeconds` in sync: the grace period should capture expected warm-up time, while the max latency defines the acceptable time-to-first-frame once that warm-up window has passed. This prevents the score from penalizing pipelines that legitimately need the configured grace period.
+Choose `probeGracePeriodSeconds` to reflect how long the Gateway normally needs to prepare a pipeline. The tester fails the run if the Gateway never reports readiness within that window; otherwise the measured warm-up time is subtracted from the latency score so only post-ready latency impacts the final score. `maxInitialLatencySeconds` should capture how quickly the first frame should arrive once the stream is ready.
 
 ##### Example Configuration
 ```json

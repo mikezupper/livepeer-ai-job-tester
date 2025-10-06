@@ -414,13 +414,17 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		return ss.handleRequestError(ctx, err, "invalid live video configuration", stats)
 	}
 
+	statusEndpoint := fmt.Sprintf("%s/live/video-to-video/%s/status",
+		strings.TrimSuffix(ss.config.BroadcasterJobEndpoint, "/"), streamKey)
+
 	ss.logger.InfoContext(ctx, "running live video stream",
 		slog.String("ingest_url", ingestURL),
 		slog.String("playback_url", playbackURL))
 
 	metrics, err := ss.ffmpegClient.RunStream(ctx, ingestURL, playbackURL, videoPath, ffmpeg.StreamOptions{
-		GracePeriod:  time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
-		TestDuration: time.Duration(liveCfg.TestDurationSeconds) * time.Second,
+		StatusEndpoint:    statusEndpoint,
+		StatusPollTimeout: time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
+		TestDuration:      time.Duration(liveCfg.TestDurationSeconds) * time.Second,
 	})
 	if err != nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
@@ -433,7 +437,8 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 	stats.TotalFrames = metrics.TotalFrames()
 	stats.TestDuration = metrics.DurationSeconds()
 	stats.InitialLatency = metrics.InitialLatency()
-	stats.StreamScore = metrics.Score(liveCfg.TargetFPS, liveCfg.MaxInitialLatencySeconds, liveCfg.ProbeGracePeriodSeconds)
+	stats.GatewayReadySeconds = metrics.GatewayReadySeconds()
+	stats.StreamScore = metrics.Score(liveCfg.TargetFPS, liveCfg.MaxInitialLatencySeconds)
 
 	ss.logger.InfoContext(ctx, "live video test completed",
 		slog.String("stream_key", streamKey),
@@ -442,6 +447,7 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		slog.Float64("avg_latency", metrics.AverageLatency()),
 		slog.Float64("duration", metrics.DurationSeconds()),
 		slog.Float64("initial_latency", metrics.InitialLatency()),
+		slog.Float64("gateway_ready_seconds", metrics.GatewayReadySeconds()),
 		slog.Float64("stream_score", stats.StreamScore))
 
 	return nil

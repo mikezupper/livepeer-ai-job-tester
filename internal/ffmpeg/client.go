@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -23,23 +24,27 @@ type Client interface {
 
 // StreamOptions tunes the behaviour of the ffmpeg client.
 type StreamOptions struct {
-	GracePeriod       time.Duration
-	TestDuration      time.Duration
-	MetricRetryDelay  time.Duration
-	MaxMetricAttempts int
+	StatusEndpoint     string
+	StatusPollInterval time.Duration
+	StatusPollTimeout  time.Duration
+	TestDuration       time.Duration
+	MetricRetryDelay   time.Duration
+	MaxMetricAttempts  int
 }
 
 const (
-	defaultGracePeriod       = 5 * time.Second
-	defaultTestDuration      = 30 * time.Second
-	defaultMetricRetryDelay  = 200 * time.Millisecond
-	defaultMaxMetricAttempts = 20
+	defaultStatusPollInterval = 1 * time.Second
+	defaultStatusPollTimeout  = 30 * time.Second
+	defaultTestDuration       = 30 * time.Second
+	defaultMetricRetryDelay   = 200 * time.Millisecond
+	defaultMaxMetricAttempts  = 20
 )
 
 var errNoFrames = errors.New("live probe produced no frames")
 
 type client struct {
-	logger *slog.Logger
+	logger     *slog.Logger
+	httpClient *http.Client
 }
 
 // NewClient constructs a Client instance using the provided logger for structured output.
@@ -47,7 +52,10 @@ func NewClient(logger *slog.Logger) Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &client{logger: logger}
+	return &client{
+		logger:     logger,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
 }
 
 // RunStream pushes a test video to the ingest URL and probes playback to produce delivery metrics.
@@ -79,16 +87,59 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 
 	ffmpegDone := false
 	var ffmpegErr error
+	readyDuration := time.Duration(0)
 
-	// Wait for grace period to allow stream to start and stabilize
-	if opts.GracePeriod > 0 {
-		select {
-		case ffmpegErr = <-ffmpegErrCh:
-			ffmpegDone = true
-			c.logger.WarnContext(ctx, "ffmpeg exited during grace period", slog.Any("error", ffmpegErr))
-			return nil, fmt.Errorf("ffmpeg exited before probe start: %w", ffmpegErr)
-		case <-time.After(opts.GracePeriod):
-			c.logger.InfoContext(ctx, "grace period to allow stream to start and stabilize elapsed, starting metrics probe")
+	if opts.StatusEndpoint != "" {
+		c.logger.InfoContext(ctx, "waiting for gateway stream readiness",
+			slog.String("status_endpoint", opts.StatusEndpoint),
+			slog.Duration("timeout", opts.StatusPollTimeout),
+			slog.Duration("interval", opts.StatusPollInterval))
+
+		readyStart := time.Now()
+		deadline := readyStart.Add(opts.StatusPollTimeout)
+
+		for {
+			ready, statusCode, statusErr := c.checkStreamReady(ctx, opts.StatusEndpoint)
+			if ready {
+				readyDuration = time.Since(readyStart)
+				c.logger.InfoContext(ctx, "gateway reported live stream ready", slog.Duration("wait", readyDuration))
+				break
+			}
+
+			if statusErr != nil {
+				c.logger.DebugContext(ctx, "gateway status check failed", slog.Any("error", statusErr))
+			} else if statusCode != 0 {
+				c.logger.DebugContext(ctx, "gateway stream not ready", slog.Int("status_code", statusCode))
+			}
+
+			if opts.StatusPollTimeout > 0 && time.Now().After(deadline) {
+				streamCancel()
+				if !ffmpegDone {
+					ffmpegErr = <-ffmpegErrCh
+					ffmpegDone = true
+				}
+				if ffmpegErr != nil {
+					return nil, fmt.Errorf("stream did not become ready before timeout (ffmpeg exited: %w)", ffmpegErr)
+				}
+				return nil, fmt.Errorf("gateway did not report stream ready within %s", opts.StatusPollTimeout)
+			}
+
+			select {
+			case ffmpegErr = <-ffmpegErrCh:
+				ffmpegDone = true
+				return nil, fmt.Errorf("ffmpeg exited before stream became ready: %w", ffmpegErr)
+			case <-ctx.Done():
+				streamCancel()
+				if !ffmpegDone {
+					ffmpegErr = <-ffmpegErrCh
+					ffmpegDone = true
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return nil, errors.New("context cancelled while waiting for stream readiness")
+			case <-time.After(opts.StatusPollInterval):
+			}
 		}
 	}
 
@@ -156,6 +207,10 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 		ffmpegErr = <-ffmpegErrCh
 		ffmpegDone = true
 	}
+
+	if metrics != nil {
+		metrics.SetGatewayReadySeconds(readyDuration.Seconds())
+	}
 	if ffmpegErr != nil {
 		if _, ok := ffmpegErr.(*exec.ExitError); ok && cancelledByTester {
 			// Ignore our own SIGKILL/SIGTERM (expected when we cancel the context)
@@ -170,14 +225,18 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 		slog.Float64("average_latency", metrics.averageLatency),
 		slog.Float64("duration_seconds", metrics.durationSeconds),
 		slog.Float64("initial_latency_seconds", metrics.initialLatency),
+		slog.Float64("gateway_ready_seconds", readyDuration.Seconds()),
 	)
 
 	return metrics, nil
 }
 
 func (o StreamOptions) withDefaults() StreamOptions {
-	if o.GracePeriod <= 0 {
-		o.GracePeriod = defaultGracePeriod
+	if o.StatusPollInterval <= 0 {
+		o.StatusPollInterval = defaultStatusPollInterval
+	}
+	if o.StatusPollTimeout <= 0 {
+		o.StatusPollTimeout = defaultStatusPollTimeout
 	}
 	if o.TestDuration <= 0 {
 		o.TestDuration = defaultTestDuration
@@ -189,6 +248,30 @@ func (o StreamOptions) withDefaults() StreamOptions {
 		o.MaxMetricAttempts = defaultMaxMetricAttempts
 	}
 	return o
+}
+
+func (c *client) checkStreamReady(ctx context.Context, endpoint string) (bool, int, error) {
+	if endpoint == "" {
+		return false, 0, errors.New("status endpoint is empty")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, 0, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusOK {
+		return true, resp.StatusCode, nil
+	}
+
+	return false, resp.StatusCode, nil
 }
 
 func (c *client) startLiveVideoPush(ctx context.Context, videoPath, ingestURL string) (*exec.Cmd, time.Time, error) {
@@ -356,18 +439,19 @@ func (c *client) pipeProcessOutput(ctx context.Context, reader io.ReadCloser, pr
 
 // Metrics captures summary data for a stream playback run.
 type Metrics struct {
-	totalFrames     int
-	totalLatency    float64
-	lastArrival     float64
-	averageFPS      float64
-	averageLatency  float64
-	durationSeconds float64
-	ingestStart     time.Time
-	initialLatency  float64
-	firstArrival    float64
-	firstFrameSeen  bool
-	firstPTS        float64
-	lastPTS         float64
+	totalFrames         int
+	totalLatency        float64
+	lastArrival         float64
+	averageFPS          float64
+	averageLatency      float64
+	durationSeconds     float64
+	ingestStart         time.Time
+	initialLatency      float64
+	firstArrival        float64
+	firstFrameSeen      bool
+	firstPTS            float64
+	lastPTS             float64
+	gatewayReadySeconds float64
 }
 
 func newMetrics(ingestStart time.Time) *Metrics {
@@ -493,6 +577,19 @@ func (m *Metrics) InitialLatency() float64 {
 	return m.initialLatency
 }
 
+// SetGatewayReadySeconds stores how long the Gateway reported the stream as warming up before becoming ready.
+func (m *Metrics) SetGatewayReadySeconds(seconds float64) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	m.gatewayReadySeconds = seconds
+}
+
+// GatewayReadySeconds returns the measured time between stream start and the Gateway readiness signal.
+func (m *Metrics) GatewayReadySeconds() float64 {
+	return m.gatewayReadySeconds
+}
+
 // Score computes a normalized performance score (0..1) based on target FPS and maximum acceptable initial latency.
 // Score calculates a performance score based on the average frames per second (FPS)
 // and initial latency metrics. The score is a weighted combination of FPS and latency
@@ -504,13 +601,11 @@ func (m *Metrics) InitialLatency() float64 {
 //     to calculate the FPS score.
 //   - maxInitialLatency: The maximum acceptable initial latency. If greater than 0
 //     and the actual initial latency is available, it is used to calculate the latency score.
-//   - graceOffset: A grace period (in seconds) to be subtracted from the initial latency
-//     before calculating the latency score.
 //
 // Returns:
 //
 //	A float64 value representing the calculated performance score, clamped between 0 and 1.
-func (m *Metrics) Score(targetFPS, maxInitialLatency float64, graceOffset int) float64 {
+func (m *Metrics) Score(targetFPS, maxInitialLatency float64) float64 {
 	const (
 		fpsWeight     = 0.6
 		latencyWeight = 0.4
@@ -525,14 +620,15 @@ func (m *Metrics) Score(targetFPS, maxInitialLatency float64, graceOffset int) f
 	initialLatency := m.InitialLatency()
 
 	if maxInitialLatency > 0 && initialLatency > 0 {
-		// Ignore the configured grace period that elapses between ingest start and probe start
-		effectiveInitialLatency := math.Max(0, initialLatency-float64(graceOffset))
-		// calculate score as ratio of max acceptable latency to effective initial latency
-		// iow, the Orch has to deliver the first frame within the max acceptable latency to get a score of 1
-		// if it takes longer, the score decreases proportionally, but is never negative
-		// if it takes less time, the score is 1 (i.e. if effective latency equals max acceptable, score is 1)
-		// capped at 1 (i.e. if effective latency is less than max acceptable, score is 1)
-		latencyScore = math.Min(1, maxInitialLatency/effectiveInitialLatency)
+		effectiveInitialLatency := initialLatency
+		if ready := m.GatewayReadySeconds(); ready > 0 {
+			effectiveInitialLatency = math.Max(0, initialLatency-ready)
+		}
+		if effectiveInitialLatency > 0 {
+			latencyScore = math.Min(1, maxInitialLatency/effectiveInitialLatency)
+		} else {
+			latencyScore = 1
+		}
 	}
 
 	return math.Max(0, math.Min(1, fpsWeight*fpsScore+latencyWeight*latencyScore))
@@ -545,6 +641,7 @@ func (m *Metrics) ToResponsePayload(startResponse string) string {
 		"average_fps":             roundFloat(m.averageFPS, 2),
 		"average_latency_seconds": roundFloat(m.averageLatency, 3),
 		"duration_seconds":        roundFloat(m.durationSeconds, 2),
+		"gateway_ready_seconds":   roundFloat(m.gatewayReadySeconds, 3),
 	}
 
 	if startResponse != "" {
