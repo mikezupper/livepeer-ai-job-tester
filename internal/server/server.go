@@ -323,10 +323,36 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 		slog.Bool("live", cfgPipeline.Live))
 
 	if cfgPipeline.Live {
-		if err := ss.handleLiveVideoTest(ctx, &stats, copiedParams); err != nil {
+		// map of the errors that should be counted as failures of the remote Orchestrator
+		errorHandlers := map[error]func() string{
+			ffmpeg.ErrProbeFailed: func() string {
+				return "live video test failed due to probe failure"
+			},
+			ffmpeg.ErrNoFrames: func() string {
+				return "live video test failed due to no frames received"
+			},
+			ffmpeg.ErrGatewayTimeout: func() string {
+				return "live video test failed due to gateway timeout"
+			},
+			ffmpeg.ErrStreamAborted: func() string {
+				return "live video test failed due to stream aborted"
+			},
+		}
+		if err := ss.executeLiveStreamTest(ctx, &stats, copiedParams); err != nil {
 			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-			ss.logger.ErrorContext(ctx, "live video test failed", slog.Any("error", err))
-			return err
+
+			// Check if the error matches any of the handlers for Orchestrator attributed failures
+			for targetErr, errorHandler := range errorHandlers {
+				if errors.Is(err, targetErr) {
+					message := errorHandler()
+					ss.logger.ErrorContext(ctx, message, slog.Any("error", err))
+					return ss.handleRequestError(ctx, err, "failed to process the job", &stats)
+				}
+			}
+
+			// Default case for unhandled errors that do not count as failures of the remote Orchestrator
+			ss.logger.ErrorContext(ctx, "unexpected error occurred during live video test", slog.Any("error", err))
+			return fmt.Errorf("failed to execute live video test: %w", err)
 		}
 		return ss.handleSuccess(ctx, &stats)
 	}
@@ -389,7 +415,7 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 	return ss.handleSuccess(ctx, &stats)
 }
 
-func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats *types.Stats, params map[string]any) error {
+func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stats *types.Stats, params map[string]any) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -399,19 +425,19 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 	liveCfg := ss.config.LiveVideo
 	if liveCfg == nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
-		return ss.handleRequestError(ctx, errors.New("live video configuration missing"), "live video configuration not provided", stats)
+		return fmt.Errorf("live video configuration not provided: %w", errors.New("live video configuration missing"))
 	}
 	videoPath := strings.TrimSpace(liveCfg.TestVideoPath)
 	if videoPath == "" {
 		videoPath = "test-assets/live-test-video.mp4"
 	}
 
-	// Live video stream key used for the test
+	// Live video stream key used for the test - this must match the path setup in mediamtx.yml for runOnReady
 	const streamKey = "aiJobTesterStream"
 	ingestURL, playbackURL, err := ss.resolveLiveVideoURLs(liveCfg, streamKey, params)
 	if err != nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
-		return ss.handleRequestError(ctx, err, "invalid live video configuration", stats)
+		return fmt.Errorf("invalid live video configuration: %w", err)
 	}
 
 	statusEndpoint := buildLiveStatusEndpoint(ss.config.BroadcasterJobEndpoint, streamKey)
@@ -424,10 +450,11 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		StatusEndpoint:    statusEndpoint,
 		StatusPollTimeout: time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
 		TestDuration:      time.Duration(liveCfg.TestDurationSeconds) * time.Second,
+		MaxProbeAttempts:  liveCfg.MaxProbeAttempts,
 	})
 	if err != nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
-		return ss.handleRequestError(ctx, err, "failed to execute live video stream", stats)
+		return fmt.Errorf("failed to execute live video stream: %w", err)
 	}
 
 	stats.RoundTripTime = time.Since(startTime).Seconds()
@@ -440,7 +467,8 @@ func (ss *EmbeddedWebhookServer) handleLiveVideoTest(ctx context.Context, stats 
 		slog.Float64("avg_latency", metrics.AverageLatency()),
 		slog.Float64("duration", metrics.DurationSeconds()),
 		slog.Float64("initial_latency", metrics.InitialLatency()),
-		slog.Float64("gateway_ready_seconds", metrics.GatewayReadySeconds()))
+		slog.Float64("gateway_ready_seconds", metrics.GatewayReadySeconds()),
+		slog.Float64("metrics_score", stats.RoundTripTime))
 
 	return nil
 }

@@ -4,7 +4,7 @@
   "jobType" : "ai",
   "internalWebServerPort": "7934",
   "internalWebServerAddress": "0.0.0.0",
-  "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
+  "metricsApiEndpoint": "https://leaderboard-api.livepeer.cloud/api/post_stats",
   "metricsSecret": "my-secret-key",
   "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
   "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
@@ -13,9 +13,9 @@
     "level": "INFO",
     "format": "TEXT",
     "modules": {
-      "app": "info",
-      "server": "info",
-      "ffmpeg": "info"
+      "app": "debug",
+      "server": "debug",
+      "ffmpeg": "debug"
     }
   },
   "liveVideo": {
@@ -26,8 +26,9 @@
     "probeGracePeriodSeconds": 20,
     "targetFPS": 12,
     "maxInitialLatencySeconds": 8,
+    "maxProbeAttempts": 5,
     "orchMapping": {
-      "0xdef1c70578b2b5e8589a42e26980687fc5153079": ["https://stream2.speedybird.xyz:18936"]
+      "0xdef1c70578b2b5e8589a42e26980687fc5153079": ["https://stream2.speedybird.xyz:18937","https://stream.speedybird.xyz:18936"]
     }
   },
   "pipelines": [

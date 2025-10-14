@@ -113,6 +113,7 @@ This file configures the AI Job Tester application.
 | `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs. |
 | `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream. |
 | `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream. |
+| `liveVide.MaxProbeAttempts` | Maximum attempts made to probe the stream playback when scoring the stream. |
 
 _**Note:**_ pipelines that require input assets (images or audio) the test files are located in the `tests-assets/` folder. When adding new pipelines, make sure to update the ai job submission logic in `internal/server/server.go` `SendTestJob` function.
 
@@ -133,9 +134,11 @@ The Gateway cannot rely on the on-chain Service Registry to discover live AI cap
 
 Ensure the Mediamtx container shares the same network namespace as the Gateway so these hooks can execute successfully.  Also, you must map a volume for the recordings if you want them to persists outside the container.
 
+Also, this `aiJobTesterStream` stream key is defined in the go code and any changes to it must be updated in this config as well!
+
 ### testMode
 
-Set `"testMode": true` in `configs/config.json` to bypass real Gateway and Leaderboard calls. In this mode the tester immediately runs against a small set of mock orchestrators and prints the statistics rather than publishing them.
+Set `"testMode": true` in `configs/config.json` to bypass Orchestrator lookups in the Gateway and Leaderboard calls that post data. In this mode the tester immediately runs against a small set of mock orchestrators and prints the statistics rather than publishing them.
 
 ### Live AI Video Data Flow
 

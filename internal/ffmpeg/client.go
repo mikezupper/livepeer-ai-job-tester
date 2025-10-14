@@ -33,6 +33,7 @@ type StreamOptions struct {
 	TestDuration       time.Duration
 	MetricRetryDelay   time.Duration
 	MaxMetricAttempts  int
+	MaxProbeAttempts   int
 }
 
 const (
@@ -40,12 +41,14 @@ const (
 	defaultStatusPollTimeout  = 30 * time.Second
 	defaultTestDuration       = 30 * time.Second
 	defaultMetricRetryDelay   = 200 * time.Millisecond
-	defaultMaxMetricAttempts  = 20
+	defaultMaxMetricAttempts  = 5
 )
 
 var (
 	ErrGatewayTimeout = errors.New("ffmpeg: gateway readiness timeout")
 	ErrStreamAborted  = errors.New("ffmpeg: stream aborted")
+	ErrNoFrames       = errors.New("ffmpeg: no frames received")
+	ErrProbeFailed    = errors.New("ffmpeg: probe failed")
 )
 
 type client struct {
@@ -112,8 +115,10 @@ func (c *client) waitForReadiness(ctx context.Context, ffmpegErrCh <-chan error,
 		readyCancel()
 		if res.err != nil {
 			if errors.Is(res.err, status.ErrTimeout) {
-				return 0, fmt.Errorf("%w after %s", ErrGatewayTimeout, opts.StatusPollTimeout)
+				// the live video status endpoint did not report ready in time / assume Orch did not send in segments in time for live video to become healthy
+				return 0, fmt.Errorf("%w: %v", ErrGatewayTimeout, res.err)
 			}
+			// other errors are likely network related - treat as tester issues
 			return 0, fmt.Errorf("gateway readiness failed: %w", res.err)
 		}
 		log.InfoContext(ctx, "gateway reported live stream ready", slog.Duration("wait", res.duration))
@@ -124,6 +129,7 @@ func (c *client) waitForReadiness(ctx context.Context, ffmpegErrCh <-chan error,
 		if ffmpegErr == nil {
 			ffmpegErr = ErrStreamAborted
 		}
+		// pushing the stream failed or was aborted likely due to the Orchestrator
 		return 0, fmt.Errorf("%w: %v", ErrStreamAborted, ffmpegErr)
 	case <-ctx.Done():
 		readyCancel()
@@ -146,10 +152,12 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case exitErr := <-ffmpegErrCh:
+			//pushing the stream failed or was aborted likely due to the Orchestrator
 			if exitErr != nil && !errors.Is(exitErr, context.Canceled) {
 				return nil, fmt.Errorf("%w: %v", ErrStreamAborted, exitErr)
 			}
-			return nil, ErrStreamAborted
+			// stream was aborted - this occurs when the Orchestrator is unhealthy/capped
+			return nil, fmt.Errorf("%w: %v", ErrStreamAborted, exitErr)
 		default:
 		}
 
@@ -157,6 +165,7 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 		metrics, metricsErr = c.collectLiveVideoMetrics(attemptCtx, playbackURL, opts.TestDuration, push.StartTime())
 		attemptCancel()
 
+		// If metrics were collected successfully, return them.
 		if metricsErr == nil {
 			return metrics, nil
 		}
@@ -183,7 +192,8 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 	opts = opts.withDefaults()
 
 	if _, err := os.Stat(testVideoPath); err != nil {
-		return nil, fmt.Errorf("unable to access test video file (%s): %w", testVideoPath, err)
+		// Failures accessing the video file is on the tester side
+		return nil, fmt.Errorf("unable to access test video file: %w", err)
 	}
 
 	log := c.logger.With(slog.String("operation", "RunStream"))
@@ -213,6 +223,7 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 			}
 		default:
 		}
+		log.ErrorContext(ctx, "failed to collect live video metrics", slog.Any("error", metricsErr))
 		return nil, metricsErr
 	}
 
@@ -258,18 +269,21 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		c.probeLogger.ErrorContext(ctx, "failed to get ffprobe stdout", slog.Any("error", err))
 		cancelProbe()
 		return nil, err
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		c.probeLogger.ErrorContext(ctx, "failed to get ffprobe stderr", slog.Any("error", err))
 		cancelProbe()
 		return nil, err
 	}
 	pipeProcessOutput(ctx, stderr, c.probeLogger, "ffprobe")
 
 	if err := cmd.Start(); err != nil {
+		c.probeLogger.ErrorContext(ctx, "failed to start ffprobe", slog.Any("error", err))
 		cancelProbe()
 		return nil, err
 	}
@@ -289,6 +303,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 		select {
 		case <-ctx.Done():
+			c.probeLogger.DebugContext(ctx, "context cancelled, stopping probe")
 			cancelProbe()
 			<-waitCh
 			return nil, ctx.Err()
@@ -305,6 +320,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 	}
 
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		c.probeLogger.ErrorContext(ctx, "error reading ffprobe output", slog.Any("error", err))
 		cancelProbe()
 		<-waitCh
 		return nil, err
@@ -315,11 +331,13 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 		waitErr = nil
 	}
 	if waitErr != nil && !errors.Is(waitErr, context.Canceled) && metrics.totalFrames == 0 {
-		return nil, waitErr
+		// If ffprobe failed and we have no frames, treat as an orchestrator issue
+		return nil, ErrProbeFailed
 	}
 
 	if metrics.totalFrames == 0 {
-		return nil, ErrNoFrames
+		// No frames received at all - likely an orchestrator issue
+		return nil, fmt.Errorf("%w: %v", ErrProbeFailed, waitErr)
 	}
 
 	metrics.finalize(duration)

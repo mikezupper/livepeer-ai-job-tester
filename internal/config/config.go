@@ -48,6 +48,7 @@ type LiveVideoConfig struct {
 	OrchMapping              map[string][]string `json:"orchMapping,omitempty"`
 	TargetFPS                float64             `json:"targetFPS,omitempty"`
 	MaxInitialLatencySeconds float64             `json:"maxInitialLatencySeconds,omitempty"`
+	MaxProbeAttempts         int                 `json:"maxProbeAttempts,omitempty"`
 }
 
 // LoggerConfig exposes runtime log configuration knobs.

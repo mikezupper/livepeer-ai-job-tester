@@ -1,14 +1,11 @@
 package ffmpeg
 
 import (
-	"errors"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 )
-
-var ErrNoFrames = errors.New("ffmpeg: probe produced no frames")
 
 // Metrics captures summary data for a stream playback run.
 type Metrics struct {
