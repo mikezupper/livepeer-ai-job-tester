@@ -701,15 +701,17 @@ paths:
   # my_camera:
   #   source: rtsp://my_camerapaths:
   # call Gateway live video-to-video API to start a stream
-  aiJobTesterStream:
+  # Dynamic path for streams starting with "aiJobTesterStream"
+  "~^aiJobTesterStream.*$":
     runOnReady: curl http://tester-gateway:8935/live/video-to-video/$MTX_PATH/start -F source_id=$MTX_SOURCE_ID -F source_type=$MTX_SOURCE_TYPE -F query=$MTX_QUERY -verbose
     record: no
-    recordPath: /app/recordings/aiJobTesterStream-in/%Y-%m-%d_%H-%M-%S
+    recordPath: /app/recordings/%path-in/%Y-%m-%d_%H-%M-%S
     recordFormat: mpegts
   # enable below for recordings from Gateway
-  aiJobTesterStream-out:
+  # Dynamic path for streams ending with "-out"
+  "~^aiJobTesterStream.*-out$":
     record: no
-    recordPath: /app/recordings/aiJobTesterStream-out/%Y-%m-%d_%H-%M-%S
+    recordPath: /app/recordings/%path-out/%Y-%m-%d_%H-%M-%S
     recordFormat: mpegts
 
   # Settings under path "all_others" are applied to all paths that

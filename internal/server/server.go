@@ -339,8 +339,6 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 			},
 		}
 		if err := ss.executeLiveStreamTest(ctx, &stats, copiedParams); err != nil {
-			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-
 			// Check if the error matches any of the handlers for Orchestrator attributed failures
 			for targetErr, errorHandler := range errorHandlers {
 				if errors.Is(err, targetErr) {
@@ -351,68 +349,72 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 			}
 
 			// Default case for unhandled errors that do not count as failures of the remote Orchestrator
+			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
 			ss.logger.ErrorContext(ctx, "unexpected error occurred during live video test", slog.Any("error", err))
 			return fmt.Errorf("failed to execute live video test: %w", err)
 		}
 		return ss.handleSuccess(ctx, &stats)
-	}
 
-	// Send the HTTP request
-	url := fmt.Sprintf("%s/%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri)
-	var req *http.Request
-	if cfgPipeline.ContentType == "application/json" {
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(input))
-		if err != nil {
-			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-			return fmt.Errorf("failed to create new HTTP request: %w", err)
-		}
-		req.Header.Set("Content-Type", cfgPipeline.ContentType)
-		req.Header.Set("Authorization", "Bearer "+ss.config.BroadcasterRequestToken)
 	} else {
-		req, err = ss.createMultipartRequest(url, copiedParams, cfgPipeline.Uri)
-		if err != nil {
-			ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-			return fmt.Errorf("failed to create multipart request: %w", err)
+
+		// Non-live job submission
+		// Send the HTTP request
+		url := fmt.Sprintf("%s/%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri)
+		var req *http.Request
+		if cfgPipeline.ContentType == "application/json" {
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(input))
+			if err != nil {
+				ss.jobTesterMetrics.IncrementTotalJobsTesterError()
+				return fmt.Errorf("failed to create new HTTP request: %w", err)
+			}
+			req.Header.Set("Content-Type", cfgPipeline.ContentType)
+			req.Header.Set("Authorization", "Bearer "+ss.config.BroadcasterRequestToken)
+		} else {
+			req, err = ss.createMultipartRequest(url, copiedParams, cfgPipeline.Uri)
+			if err != nil {
+				ss.jobTesterMetrics.IncrementTotalJobsTesterError()
+				return fmt.Errorf("failed to create multipart request: %w", err)
+			}
+			req = req.WithContext(ctx)
 		}
-		req = req.WithContext(ctx)
-	}
 
-	// Measure round-trip time.
-	startTime := time.Now()
-	res, err := ss.client.Do(req)
-	jobTime := time.Now()
+		// Measure round-trip time.
+		startTime := time.Now()
+		res, err := ss.client.Do(req)
+		jobTime := time.Now()
 
-	// Handle request errors.
-	if err != nil {
-		stats.RoundTripTime = jobTime.Sub(startTime).Seconds()
-		return ss.handleRequestError(ctx, err, "failed to process the job", &stats)
-	}
-	defer res.Body.Close()
+		// Handle request errors.
+		if err != nil {
+			stats.RoundTripTime = jobTime.Sub(startTime).Seconds()
+			return ss.handleRequestError(ctx, err, "failed to process the job", &stats)
+		}
+		defer res.Body.Close()
 
-	body, err := io.ReadAll(res.Body)
-	readBodyTime := time.Now()
-	if err != nil {
+		body, err := io.ReadAll(res.Body)
+		readBodyTime := time.Now()
+		if err != nil {
+			stats.RoundTripTime = readBodyTime.Sub(startTime).Seconds()
+			return ss.handleRequestError(ctx, err, "failed to read response body", &stats)
+		}
 		stats.RoundTripTime = readBodyTime.Sub(startTime).Seconds()
-		return ss.handleRequestError(ctx, err, "failed to read response body", &stats)
-	}
-	stats.RoundTripTime = readBodyTime.Sub(startTime).Seconds()
 
-	// Check status code and handle errors.
-	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		//capture the error response from gateway
-		stats.ResponsePayload = string(body)
-		return ss.handleStatusCodeError(ctx, res.StatusCode, string(body), &stats)
-	}
+		// Check status code and handle errors.
+		if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
+			//capture the error response from gateway
+			stats.ResponsePayload = string(body)
+			return ss.handleStatusCodeError(ctx, res.StatusCode, string(body), &stats)
+		}
 
-	// Capture response if necessary.
-	if cfgPipeline.CaptureResponse {
-		stats.ResponsePayload = string(body)
-	} else {
-		stats.ResponsePayload = "{\"message\":\"(Job Tester) Capture Response Disabled\"}"
-	}
+		// Capture response if necessary.
+		if cfgPipeline.CaptureResponse {
+			stats.ResponsePayload = string(body)
+		} else {
+			stats.ResponsePayload = "{\"message\":\"(Job Tester) Capture Response Disabled\"}"
+		}
 
-	// Finalize stats and report success.
-	return ss.handleSuccess(ctx, &stats)
+		// Finalize stats and report success.
+		return ss.handleSuccess(ctx, &stats)
+	}
 }
 
 func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stats *types.Stats, params map[string]any) error {
@@ -433,7 +435,7 @@ func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stat
 	}
 
 	// Live video stream key used for the test - this must match the path setup in mediamtx.yml for runOnReady
-	const streamKey = "aiJobTesterStream"
+	streamKey := ss.generateStreamKey()
 	ingestURL, playbackURL, err := ss.resolveLiveVideoURLs(liveCfg, streamKey, params)
 	if err != nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
@@ -443,6 +445,7 @@ func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stat
 	statusEndpoint := buildLiveStatusEndpoint(ss.config.BroadcasterJobEndpoint, streamKey)
 
 	ss.logger.InfoContext(ctx, "running live video stream",
+		slog.String("stream_key", streamKey),
 		slog.String("ingest_url", ingestURL),
 		slog.String("playback_url", playbackURL))
 
@@ -471,6 +474,10 @@ func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stat
 		slog.Float64("metrics_score", stats.RoundTripTime))
 
 	return nil
+}
+
+func (ss *EmbeddedWebhookServer) generateStreamKey() string {
+    return "aiJobTesterStream-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func (ss *EmbeddedWebhookServer) resolveLiveVideoURLs(cfg *config.LiveVideoConfig, streamKey string, params map[string]any) (string, string, error) {

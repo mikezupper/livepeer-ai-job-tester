@@ -61,7 +61,7 @@ services:
     volumes:
       - ./configs/mediamtx/mediamtx.yml:/mediamtx.yml
       # Add the below path mount if you want to save recordings to host
-      # also enable the recording settings in mediamtx.yml (e,g, unders paths as 'aiJobTesterStream-out')
+      # also enable the recording settings in mediamtx.yml for the relevant paths
       # - ./mediamtx-recordings:/app/recordings 
 
 volumes:

@@ -105,8 +105,8 @@ This file configures the AI Job Tester application.
 | `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint.                                                                                                                                                      |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
 | `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission. |
-| `liveVideo.ingestURL`      | Base RTMP ingest URL used when pushing the test stream (the tester appends `aiJobTesterStream`). |
-| `liveVideo.playbackURL`    | Base RTMP playback URL used by `ffprobe` to measure output (the tester appends `aiJobTesterStream-out`). |
+| `liveVideo.ingestURL`      | Base RTMP ingest URL used when pushing the test stream (the tester appends a dynamic stream key). |
+| `liveVideo.playbackURL`    | Base RTMP playback URL used by `ffprobe` to measure output (the tester appends the dyanmic stream key followed by `-out`). |
 | `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests. |
 | `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. |
 | `liveVideo.probeGracePeriodSeconds` | Maximum seconds to wait for the Gateway `/live/video-to-video/{stream}/status` endpoint to report the stream as ready before failing the test. |
@@ -127,14 +127,14 @@ The Gateway cannot rely on the on-chain Service Registry to discover live AI cap
 
 ### Mediamtx Integration
 
-`configs/mediamtx/mediamtx.yml` defines two relevant RTMP paths:
+`configs/mediamtx/mediamtx.yml` defines two relevant RTMP paths with dyanmic stream key support:
 
-- `aiJobTesterStream` – Uses `runOnReady` to invoke the Gateway CLI and start a live video session as soon as the tester pushes the input RTMP stream.
-- `aiJobTesterStream-out` – Records the transformed output when recording is enabled, allowing you to inspect the final video produced by the orchestrator.
+- `~^aiJobTesterStream.*$` – Uses `runOnReady` to invoke the Gateway CLI and start a live video session as soon as the tester pushes the input RTMP stream.
+- `~^aiJobTesterStream.*-out$` – Records the transformed output when recording is enabled, allowing you to inspect the final video produced by the orchestrator.
 
 Ensure the Mediamtx container shares the same network namespace as the Gateway so these hooks can execute successfully.  Also, you must map a volume for the recordings if you want them to persists outside the container.
 
-Also, this `aiJobTesterStream` stream key is defined in the go code and any changes to it must be updated in this config as well!
+Also, the `aiJobTesterStream` stream key prefix is defined in the go code and any changes to it must be updated in this config as well!
 
 ### testMode
 
@@ -143,7 +143,7 @@ Set `"testMode": true` in `configs/config.json` to bypass Orchestrator lookups i
 ### Live AI Video Data Flow
 
 1. The tester determines whether a job is live by inspecting the pipeline configuration (`live: true`). Live jobs push the static fixture video to the Gateway via RTMP using the parameters defined in the pipeline block.
-2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using the `aiJobTesterStream` key.
+2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using `aiJobTesterStream` prefix for the stream key.
 3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `probeGracePeriodSeconds` elapses.
 4. Once the stream is ready the tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
 5. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
