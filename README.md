@@ -102,11 +102,10 @@ This file configures the AI Job Tester application.
 | `metricsApiEndpoint`       | The URL to the Leaderboard API [post_stats endpoint](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support#api-reference)           |
 | `metricsSecret`            | The `SECRET` key used by the Leaderboard API Server.                                                                                                                                               |
 | `broadcasterJobEndpoint`   | The URL to the Livepeer Gateway AI Job Endpoint.                                                                                                                                                   |
-| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint.                                                                                                                                                      |
+| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint. See note regarding `Orchestrator Discovery for Live Jobs`.                                                                                                                                                     |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
 | `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission. |
-| `liveVideo.ingestURL`      | Base RTMP ingest URL used when pushing the test stream (the tester appends a dynamic stream key). |
-| `liveVideo.playbackURL`    | Base RTMP playback URL used by `ffprobe` to measure output (the tester appends the dyanmic stream key followed by `-out`). |
+| `liveVideo.mediaServerURL`      | Base ingest URL used when pushing the test stream (the tester appends a dynamic stream key). and by `ffprobe` to measure output (the tester appends the dyanmic stream key followed by `-out`). |
 | `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests. |
 | `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. |
 | `liveVideo.probeGracePeriodSeconds` | Maximum seconds to wait for the Gateway `/live/video-to-video/{stream}/status` endpoint to report the stream as ready before failing the test. |
@@ -123,7 +122,9 @@ Each live-enabled pipeline must also mark the configuration with `"live": true` 
 
 ### Orchestrator Discovery for Live Jobs
 
-The Gateway cannot rely on the on-chain Service Registry to discover live AI capabilities and all Orchestrator URIs. Populate `configs/live-video-orchestrators.json` with the exact orchestrator addresses that should receive live video tests. The Gateway reads this file and uses the entries to validate capabilities before the tester runs a job. This is used in combination with `liveVideo.orchMapping` to find the orchestrator and override the published ServiceURI with the full list of URIs that should be exercised for live video.
+The Gateway cannot rely on the on-chain Service Registry to discover live AI capabilities and all Orchestrator URIs. As such, there is a separate Docker Compose project (`docker-compose-live-video.yml`) that runs two Gateway, one for running test jobs and another for retrieving the capabilities of a pre-configured list of live video enable Orchestrators. The second Gateway (registry) ensures the first Gateway (tester) can be dynamic set to a specific Orchestrator URI without interfering with service discovery. This is a short term fix until the service registry is improved.
+
+To leverage this, you must configure this second Gateway with the exact Orchestrator service URIs that should receive live video tests in the `orchAddr` flag. This is used in combination with `liveVideo.orchMapping` to find the orchestrator and override the published ServiceURI with the full list of URIs that should be exercised for live video. Lastly, this second gateway should be configured as the `broadcasterCliEndpoint` in your config.json as well.
 
 ### Mediamtx Integration
 

@@ -18,7 +18,7 @@ type streamPush struct {
 	wErr   error
 }
 
-func startStreamPush(videoPath, ingestURL string, logger *slog.Logger) (*streamPush, error) {
+func startStreamPush(videoPath, mediaServerURL string, logger *slog.Logger) (*streamPush, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := []string{
@@ -35,7 +35,7 @@ func startStreamPush(videoPath, ingestURL string, logger *slog.Logger) (*streamP
 		"-force_key_frames", "expr:gte(t,n_forced*2)",
 		"-vsync", "cfr",
 		"-f", "flv",
-		ingestURL,
+		mediaServerURL,
 	}
 
 	log := logger

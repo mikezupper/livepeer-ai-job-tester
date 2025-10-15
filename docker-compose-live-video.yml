@@ -1,10 +1,5 @@
 services:
-  orch-list-server:
-    image: nginx:alpine
-    container_name: "orch-list-server"
-    restart: unless-stopped
-    volumes:
-      - ./configs:/usr/share/nginx/html:ro
+
   ai-job-tester:
     image: ai-job-tester:latest
     container_name: "ai-job-tester"
@@ -17,12 +12,15 @@ services:
       - CONFIG_FILE=/app/configs/config.json
     depends_on:
       - tester-gateway
+      - service-registry-gateway
 
   tester-gateway:
     image: tztcloud/go-livepeer:v0.8.6
     restart: unless-stopped
     hostname: ai-tester-gateway
     container_name: ai-tester-gateway
+    environment:
+      - LIVEPEER_OS_HTTP_TIMEOUT=8s
     volumes:
       - tester-gateway-lpData:/root/.lpData
     command: '-ethUrl=YOUR_RPC_URL
@@ -45,10 +43,40 @@ services:
               -discoveryTimeout=750ms
               -webhookRefreshInterval=0
               -aiSessionTimeout=0
-              -orchWebhookUrl=http://orch-list-server/live-video-orchestrators.json
+              -orchWebhookUrl=http://ai-job-tester:7934/orchestrators
               '
-    depends_on:
-      - orch-list-server
+
+  service-registry-gateway:
+    image: tztcloud/go-livepeer:v0.8.6
+    restart: unless-stopped
+    hostname: service-registry-gateway
+    container_name: service-registry-gateway
+    environment:
+      - LIVEPEER_OS_HTTP_TIMEOUT=8s
+    volumes:
+      - service-registry-gateway-lpData:/root/.lpData
+    command: '-ethUrl=https://arb1.xode.app/l2/def1e30d5e9ef490f82c7d8a7af6d912
+              -ethPassword=/root/.lpData/eth-secret.txt
+              -ethKeystorePath=/root/.lpData
+              -network=arbitrum-one-mainnet
+              -serviceAddr=service-registry-gateway:8935
+              -cliAddr=service-registry-gateway:7935
+              -gateway=true
+              -monitor=true
+              -maxPricePerUnit=125000000
+              -maxTotalEV=100000000000000
+              -v=6
+              -pixelsPerUnit=1
+              -blockPollingInterval=20
+              -httpIngest=true
+              -httpAddr=0.0.0.0:8935
+              -rtmpAddr=0.0.0.0:1936
+              -orchMinLivepeerVersion=v0.7.9-ai.3
+              -discoveryTimeout=750ms
+              -webhookRefreshInterval=0
+              -aiSessionTimeout=0
+              -orchAddr=https://stream2.speedybird.xyz:18937,https://stream.speedybird.xyz:18936
+              '
 
   mediamtx:
     image: livepeerci/mediamtx
@@ -66,6 +94,8 @@ services:
 
 volumes:
   tester-gateway-lpData:
+    external: true
+  service-registry-gateway-lpData:
     external: true
   ai-job-tester:
     external: true

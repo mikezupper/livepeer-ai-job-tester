@@ -7,7 +7,7 @@
   "metricsApiEndpoint": "https://leaderboard-api.livepeer.cloud/api/post_stats",
   "metricsSecret": "my-secret-key",
   "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterCliEndpoint": "http://service-registry-gateway:7935",
   "broadcasterRequestToken": "None",
   "logger": {
     "level": "INFO",
@@ -19,8 +19,7 @@
     }
   },
   "liveVideo": {
-    "ingestURL": "rtmp://mediamtx:1935",
-    "playbackURL": " rtmp://mediamtx:1935",
+    "mediaServerURL": "rtmp://mediamtx:1935",
     "testVideoPath": "test-assets/live-test-video.mp4",
     "testDurationSeconds": 10,
     "probeGracePeriodSeconds": 20,
@@ -143,12 +142,7 @@
     {
       "name": "Live video to video",
       "uri": "live-video-to-video",
-      "capture_response": false,
-      "contentType": "application/json",
-      "live": true,
-      "parameters": {
-        "pipeline": "streamdiffusion-sdxl"
-      }
+      "live": true
     }
   ]
 }

@@ -289,12 +289,13 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 		return fmt.Errorf("pipeline not found in configuration file: %s", pipeline)
 	}
 
-	// Copy pipeline parameters and add the model ID.
+	// Copy pipeline parameters and add the model ID and pipeline.
 	copiedParams := make(map[string]any)
 	for key, value := range cfgPipeline.Parameters {
 		copiedParams[key] = value
 	}
 	copiedParams["model_id"] = model
+	copiedParams["pipeline"] = model
 
 	// Marshal the parameters into JSON format.
 	input, err := json.Marshal(copiedParams)
@@ -476,19 +477,19 @@ func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stat
 	return nil
 }
 
+// generateStreamKey generates a unique stream key for live video tests based on the current timestamp.
 func (ss *EmbeddedWebhookServer) generateStreamKey() string {
-    return "aiJobTesterStream-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	return "aiJobTesterStream-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func (ss *EmbeddedWebhookServer) resolveLiveVideoURLs(cfg *config.LiveVideoConfig, streamKey string, params map[string]any) (string, string, error) {
-	ingest := strings.TrimSpace(cfg.IngestURL)
-	playback := strings.TrimSpace(cfg.PlaybackURL)
-	if ingest == "" || playback == "" {
-		return "", "", errors.New("rtmp ingest or playback URL missing")
+	mediaServerURLTrimmed := strings.TrimSpace(cfg.MediaServerURL)
+	if mediaServerURLTrimmed == "" {
+		return "", "", errors.New("media server URL missing")
 	}
 
-	ingest = buildStreamURL(ingest, streamKey, params)
-	playback = playback + "/" + streamKey + "-out"
+	ingest := buildStreamURL(mediaServerURLTrimmed, streamKey, params)
+	playback := mediaServerURLTrimmed + "/" + streamKey + "-out"
 	return ingest, playback, nil
 }
 

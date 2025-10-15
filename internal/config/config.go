@@ -40,14 +40,13 @@ type Pipeline struct {
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
 type LiveVideoConfig struct {
-	IngestURL                string              `json:"ingestURL"`
-	PlaybackURL              string              `json:"playbackURL"`
-	TestVideoPath            string              `json:"testVideoPath"`
-	TestDurationSeconds      int                 `json:"testDurationSeconds"`
-	ProbeGracePeriodSeconds  int                 `json:"probeGracePeriodSeconds"`
-	OrchMapping              map[string][]string `json:"orchMapping,omitempty"`
-	TargetFPS                float64             `json:"targetFPS,omitempty"`
-	MaxInitialLatencySeconds float64             `json:"maxInitialLatencySeconds,omitempty"`
+	MediaServerURL          string              `json:"mediaServerURL"`
+	TestVideoPath           string              `json:"testVideoPath"`
+	TestDurationSeconds     int                 `json:"testDurationSeconds"`
+	ProbeGracePeriodSeconds int                 `json:"probeGracePeriodSeconds"`
+	OrchMapping             map[string][]string `json:"orchMapping,omitempty"`
+	TargetFPS               float64             `json:"targetFPS,omitempty"`
+	MaxInitialLatencySeconds float64            `json:"maxInitialLatencySeconds,omitempty"`
 	MaxProbeAttempts         int                 `json:"maxProbeAttempts,omitempty"`
 }
 
