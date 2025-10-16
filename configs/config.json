@@ -1,5 +1,4 @@
 {
-  "testMode": true,
   "region": "SEA",
   "jobType" : "ai",
   "internalWebServerPort": "7934",

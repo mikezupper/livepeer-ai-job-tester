@@ -22,7 +22,6 @@ type Config struct {
 	BroadcasterRequestToken  string           `json:"broadcasterRequestToken"`
 	Pipelines                []Pipeline       `json:"pipelines"`
 	LiveVideo                *LiveVideoConfig `json:"liveVideo,omitempty"`
-	TestMode                 bool             `json:"testMode,omitempty"`
 	Logger                   *LoggerConfig    `json:"logger,omitempty"`
 }
 

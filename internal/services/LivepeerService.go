@@ -49,16 +49,6 @@ func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.O
 	}
 
 	s.logger.InfoContext(ctx, "fetching registered orchestrators")
-	if s.config.TestMode {
-		orchStr := `[{"Address":"0xdef1c70578b2b5e8589a42e26980687fc5153079","ServiceURI":"https://compute.speedybird.xyz:443","LastRewardRound":3947,"RewardCut":220000,"FeeShare":50000,"DelegatedStake":97524394215341228748737,"ActivationRound":3287,"DeactivationRound":115792089237316195423570985008687907853269984665640564039457584007913129639935,"LastActiveStakeUpdateRound":3948,"Active":true,"Status":"Registered","PricePerPixel":"0"},{"Address":"0x3bbe84023c11c4874f493d70b370d26390e3c580","ServiceURI":"https://dexpeer.code4.us:8935","LastRewardRound":3947,"RewardCut":300000,"FeeShare":500000,"DelegatedStake":92738696234060805088161,"ActivationRound":2467,"DeactivationRound":115792089237316195423570985008687907853269984665640564039457584007913129639935,"LastActiveStakeUpdateRound":3948,"Active":true,"Status":"Registered","PricePerPixel":"1841/20"}]`
-		var orchestrators []types.Orchestrator
-		if err := json.Unmarshal([]byte(orchStr), &orchestrators); err != nil {
-			return nil, err
-		}
-		s.logger.InfoContext(ctx, "returning orchestrators from test mode", slog.Int("count", len(orchestrators)))
-		return orchestrators, nil
-	}
-
 	url := fmt.Sprintf("%s/registeredOrchestrators", s.config.BroadcasterCliEndpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -144,19 +134,7 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	// Check if TestMode is enabled in the config.
-	if s.config.TestMode {
-		s.logger.InfoContext(ctx, "test mode active - skipping stats post",
-			slog.String("region", stats.Region),
-			slog.String("orchestrator", stats.Orchestrator),
-			slog.String("pipeline", stats.Pipeline),
-			slog.String("model", stats.Model),
-			slog.Float64("success_rate", float64(stats.SuccessRate)),
-			slog.Float64("round_trip", stats.RoundTripTime),
-			slog.String("response_payload", stats.ResponsePayload))
-		return nil
-	}
+	
 	// Marshal the stats data into JSON format.
 	input, err := json.Marshal(stats)
 	if err != nil {

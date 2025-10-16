@@ -130,16 +130,12 @@ To leverage this, you must configure this second Gateway with the exact Orchestr
 
 `configs/mediamtx/mediamtx.yml` defines two relevant RTMP paths with dyanmic stream key support:
 
-- `~^aiJobTesterStream.*$` – Uses `runOnReady` to invoke the Gateway CLI and start a live video session as soon as the tester pushes the input RTMP stream.
+- `~^aiJobTesterStream.*$` – Uses `runOnReady` to invoke the Gateway CLI and start a live video session as soon as the tester pushes the input RTMP stream.  Update this line to point to the URI of the tester Gateway.
 - `~^aiJobTesterStream.*-out$` – Records the transformed output when recording is enabled, allowing you to inspect the final video produced by the orchestrator.
 
 Ensure the Mediamtx container shares the same network namespace as the Gateway so these hooks can execute successfully.  Also, you must map a volume for the recordings if you want them to persists outside the container.
 
 Also, the `aiJobTesterStream` stream key prefix is defined in the go code and any changes to it must be updated in this config as well!
-
-### testMode
-
-Set `"testMode": true` in `configs/config.json` to bypass Orchestrator lookups in the Gateway and Leaderboard calls that post data. In this mode the tester immediately runs against a small set of mock orchestrators and prints the statistics rather than publishing them.
 
 ### Live AI Video Data Flow
 
@@ -148,7 +144,7 @@ Set `"testMode": true` in `configs/config.json` to bypass Orchestrator lookups i
 3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `probeGracePeriodSeconds` elapses.
 4. Once the stream is ready the tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
 5. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
-6. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, readiness duration, initial latency, and a normalized performance score) before being posted to the Leaderboard or logged in `testMode`.
+6. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, readiness duration, initial latency, and a normalized performance score) before being posted to the Leaderboard.
 
 ### Live Video Metrics & Scoring
 
