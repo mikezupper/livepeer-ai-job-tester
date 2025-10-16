@@ -105,16 +105,22 @@ func (m *Metrics) GatewayReadySeconds() float64 { return m.gatewayReadySeconds }
 
 func (m *Metrics) Score(targetFPS, maxInitialLatency float64) float64 {
 	const (
-		fpsWeight     = 0.6
-		latencyWeight = 0.4
+		fpsWeight     = 0.7 // FPS remains the dominant factor
+		latencyWeight = 0.3 // Latency has a lower impact
 	)
 
-	fpsScore := 1.0
+	// FPS Score: Apply a non-linear penalty based on the distance from targetFPS
+	fpsScore := 0.0
 	if targetFPS > 0 {
-		fpsScore = math.Min(1, m.averageFPS/targetFPS)
+		// Calculate the ratio of averageFPS to targetFPS
+		ratio := m.averageFPS / targetFPS
+
+		// Apply a quadratic penalty: closer to 1 gives a higher score, further away penalizes harder
+		fpsScore = math.Max(0, 1-math.Pow(1-ratio, 2))
 	}
 
-	latencyScore := 1.0
+	// Latency Score: Normalize latency to a range of 0 to 1
+	latencyScore := 1.0 // Start with the best score for latency
 	initialLatency := m.InitialLatency()
 
 	if maxInitialLatency > 0 && initialLatency > 0 {
@@ -122,14 +128,13 @@ func (m *Metrics) Score(targetFPS, maxInitialLatency float64) float64 {
 		if ready := m.GatewayReadySeconds(); ready > 0 {
 			effectiveInitialLatency = math.Max(0, initialLatency-ready)
 		}
-		if effectiveInitialLatency > 0 {
-			latencyScore = math.Min(1, maxInitialLatency/effectiveInitialLatency)
-		} else {
-			latencyScore = 1
-		}
+		latencyScore = math.Max(0, 1-(effectiveInitialLatency/maxInitialLatency))
 	}
 
-	return math.Max(0, math.Min(1, fpsWeight*fpsScore+latencyWeight*latencyScore))
+	// Combine FPS and Latency Scores
+	// Scale the score to 0–1
+	finalScore := fpsWeight*fpsScore + latencyWeight*latencyScore
+	return math.Max(0, math.Min(1, finalScore))
 }
 
 func parseFramePTS(line string) (float64, bool) {
