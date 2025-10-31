@@ -1,0 +1,151 @@
+{
+  "testMode": false,
+  "region": "SEA",
+  "jobType": "ai",
+  "internalWebServerPort": "7934",
+  "internalWebServerAddress": "0.0.0.0",
+  "metricsApiEndpoint": "https://lpc-leaderboard-serverless.vercel.app/api/post_stats",
+  "metricsSecret": "my-secret-key",
+  "broadcasterJobEndpoint": "http://rtav-tester-gateway:8935",
+  "broadcasterCliEndpoint": "http://rtav-registry-tester-gateway:7935",
+  "broadcasterRequestToken": "ef78f3aa-40fa-4cf5-8588-4a3480e97aed",
+  "logger": {
+    "level": "INFO",
+    "format": "TEXT",
+    "modules": {
+      "app": "debug",
+      "server": "debug",
+      "ffmpeg": "debug"
+    }
+  },
+  "liveVideo": {
+    "mediaServerURL": "rtmp://live-video-to-video-mediamtx:1935",
+    "testVideoPath": "test-assets/live-test-video.mp4",
+    "testDurationSeconds": 10,
+    "probeGracePeriodSeconds": 20,
+    "targetFPS": 12,
+    "maxInitialLatencySeconds": 8,
+    "maxProbeAttempts": 5,
+    "orchMapping": {
+      "0x08f76e106a2dd4f6385efc8ea6c69a2816082461": [
+        "https://ai.brzeczyszczykiewicz.work:8935",
+        "https://ai2.brzeczyszczykiewicz.work:8935",
+        "https://ai3.brzeczyszczykiewicz.work:8935",
+        "https://ai4.brzeczyszczykiewicz.work:8935"
+      ],
+      "0x0abe02f6ef1fa8c29f9b3f9f170c6f3681fd3031": [
+        "https://flowlivepeer.go.ro:8936"
+      ],
+      "0x104a7ca059a35fd4def5ecb16600b2caa1fe1361": [
+        "https://ai-mdw.eliteencoder.net:8936",
+        "https://ai.eliteencoder.net:8936",
+        "https://hky.eliteencoder.net:8936"
+      ],
+      "0x10b21af759129f32c6064adfb85d3ea2a8c0209c": [
+        "https://ai.mangolpt.com:8936"
+      ],
+      "0x180859c337d14edf588c685f3f7ab4472ab6a252": [
+        "https://flo-5.lvpr.io:10006",
+        "https://flo-6.lvpr.io:10003",
+        "https://flo-7.lvpr.io:10025",
+        "https://ida-5.lvpr.io:8888",
+        "https://ida-6.lvpr.io:8888",
+        "https://ida-7.lvpr.io:8888",
+        "https://ida-8.lvpr.io:8888",
+        "https://mar-0.lvpr.io:20408",
+        "https://mch-1.lvpr.io:10708",
+        "https://mch-2.lvpr.io:10804",
+        "https://mco-3.lvpr.io:10004",
+        "https://mis-0.lvpr.io:10507",
+        "https://mis-16.lvpr.io:20015",
+        "https://mis-18.lvpr.io:8888",
+        "https://mis-19.lvpr.io:8888",
+        "https://ohi-0.lvpr.io:28008",
+        "https://ont-1.lvpr.io:20001",
+        "https://vast26170984.lvpr.io:61769"
+      ],
+      "0x22b1bcc0c0db224bfc56c9b95a2db407548666ee": [
+        "https://lpt.thomasblock.io:20110"
+      ],
+      "0x2e3a21ae7cdeb48f57fcad1ce16b258d5502ac05": [
+        "https://ai.ultimaratio.link:18936",
+        "https://ai2.ultimaratio.link:18936"
+      ],
+      "0x3b28a7d785356dc67c7970666747e042305bfb79": [
+        "https://ai.ad-astra.live:9966",
+        "https://ai2.ad-astra.live:9966",
+        "https://ai3.ad-astra.live:9988"
+      ],
+      "0x3bbe84023c11c4874f493d70b370d26390e3c580": [
+      "https://dexpeer-ai.code4.us:8935"
+      ],
+      "0x4416a274f86e1db860b513548b672154d43b81b2": [
+        "https://livepeer-msi-1.prod.dcg-labs.co:8935",
+        "https://livepeer-msi-2.prod.dcg-labs.co:8935"
+      ],
+      "0x47a907a0bd1627d71cd14430a721d1550d6d6f58": [
+        "https://ai.nightnode.net:8888"
+      ],
+      "0x4bd850175a4e43afee34ae7b7dcd079a572dd69b": [
+        "https://ai.tinyhoshi.xyz:18936"
+      ],
+      "0x5263e0ce3a97b634d8828ce4337ad0f70b30b077": [
+        "https://ai1.open-pool.com:38935"
+      ],
+      "0x5bdeedca9c6346b0ce6b17ffa8227a4dace37039": [
+        "https://45.137.88.208:48935"
+      ],
+      "0x66970f8b4a5376ed7961e8633a83809e49ad809d": [
+        "https://server.ai-bitbender.xyz:1112"
+      ],
+      "0x733da28b0145ff561868e408d2ac8565ebe73aab": [
+        "https://legiocorp.link:8777"
+      ],
+      "0x74a7839094b7f723b2c1c915e88928f49dfdc21f": [
+        "https://ai.livepeer-utopia.xyz:8935"
+      ],
+      "0x847791cbf03be716a7fe9dc8c9affe17bd49ae5e": [
+        "https://ai.stronk.rocks:9994"
+      ],
+      "0x9d5611bf0dadddb4441a709141d9229d7f6b3e47": [
+        "https://rtvai.deficrypto.dev:8936"
+      ],
+      "0x9d61ae5875e89036fbf6059f3116d01a22ace3c8": [
+        "https://rtv.nullworks.xyz:9924"
+      ],
+      "0xb8c66a19c2d4ccfe79e002d9e3a02dff73de4aba": [
+        "https://ai.organic-node.uk:59165"
+      ],
+      "0xbd677e96a755207d348578727aa57a512c2022bd": [
+        "https://ai.arjo-node.uk:6500",
+        "https://ai2.arjo-node.uk:6655"
+      ],
+      "0xcf5654abfaefc001a84aeb18fe4c13bfd0f8a77b": [
+        "https://lpt.gzp.link:8887",
+        "https://lpt.gzp.link:8888"
+      ],
+      "0xd00354656922168815fcd1e51cbddb9e359e3c7f": [
+        "https://rtav-orch.xodeapp.xyz:28935"
+      ],
+      "0xd603d6bf88aa061fcab8fa552026694a7fd005ce": [
+        "https://kilout.link:8999"
+      ],
+      "0xdc28f2842810d1a013ad51de174d02eaba192dc7": [
+        "https://ai.pon-eth.com:9191",
+        "https://ai3.pon-eth.com:9191",
+        "https://ai4.pon-eth.com:9190"
+      ],
+      "0xdef1c70578b2b5e8589a42e26980687fc5153079": [
+        "https://stream.speedybird.xyz:18936",
+        "https://stream2.speedybird.xyz:18937"
+      ]
+    }
+  },
+  "pipelines": [
+    {
+      "name": "Live video to video",
+      "uri": "live-video-to-video",
+      "live": true
+    }
+  ]
+}
