@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/types"
@@ -89,6 +90,42 @@ func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.O
 	return filtered, nil
 }
 
+// minimal structs to parse /getNetworkCapabilities
+type networkCapabilitiesResponse struct {
+	Orchestrators []networkOrchestrator `json:"orchestrators"`
+}
+
+type networkOrchestrator struct {
+	Address      string `json:"address"`
+	Capabilities struct {
+		Constraints struct {
+			PerCapability map[string]struct {
+				Models map[string]struct {
+					Warm bool `json:"warm"`
+					// capacity/capacityInUse/runnerVersion may exist but are not required here
+				} `json:"models"`
+			} `json:"PerCapability"`
+		} `json:"constraints"`
+	} `json:"capabilities"`
+	Hardware []struct {
+		Pipeline string `json:"pipeline"`
+		ModelID  string `json:"model_id"`
+	} `json:"hardware"`
+}
+
+func normalizePipelineType(p string) string {
+	// /getNetworkCapabilities uses slugs like "live-video-to-video" and "llm"
+	if p == "llm" {
+		return "Llm"
+	}
+	// make: "live-video-to-video" -> "Live video to video"
+	p = strings.ReplaceAll(p, "-", " ")
+	if len(p) == 0 {
+		return p
+	}
+	return strings.ToUpper(p[:1]) + p[1:]
+}
+
 // FetchPipelines fetches the available pipeline configurations from the Livepeer Gateway.
 // The response contains the pipelines data, which is unmarshalled into the Pipelines struct.
 func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipelines, error) {
@@ -96,7 +133,8 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 		ctx = context.Background()
 	}
 
-	url := fmt.Sprintf("%s/getOrchestratorAICapabilities", s.config.BroadcasterCliEndpoint)
+	// ✅ switched endpoint
+	url := fmt.Sprintf("%s/getNetworkCapabilities", s.config.BroadcasterCliEndpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -117,14 +155,81 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 		return nil, err
 	}
 
-	var pipelines types.Pipelines
-	if err := json.Unmarshal(body, &pipelines); err != nil {
+	var netCaps networkCapabilitiesResponse
+	if err := json.Unmarshal(body, &netCaps); err != nil {
 		return nil, err
 	}
 
-	s.logger.DebugContext(ctx, "pipelines fetched", slog.Int("orchestrators", len(pipelines.Orchestrators)))
+	out := types.Pipelines{Orchestrators: make([]types.OrchestratorCapability, 0, len(netCaps.Orchestrators))}
 
-	return &pipelines, nil
+	for _, orch := range netCaps.Orchestrators {
+		// pipeline -> model -> status
+		pipelineModels := map[string]map[string]types.Status{}
+
+		// 1) Prefer "hardware" because it directly states pipeline+model pairs
+		for _, hw := range orch.Hardware {
+			pt := normalizePipelineType(hw.Pipeline)
+			if pt == "" || hw.ModelID == "" {
+				continue
+			}
+			if pipelineModels[pt] == nil {
+				pipelineModels[pt] = map[string]types.Status{}
+			}
+			// ✅ dedupe by model name
+			if _, exists := pipelineModels[pt][hw.ModelID]; !exists {
+				pipelineModels[pt][hw.ModelID] = types.Status{Cold: 0, Warm: 1}
+			}
+		}
+
+		// 2) Also include models listed under PerCapability constraints (some nodes include this even if hardware is empty)
+		for _, pc := range orch.Capabilities.Constraints.PerCapability {
+			for modelName, m := range pc.Models {
+				if modelName == "" {
+					continue
+				}
+				// If we don't know pipeline from this section, we still can’t assign it reliably
+				// (so we only use this to set warm/cold on models we already saw via hardware).
+				for _, models := range pipelineModels {
+					if st, ok := models[modelName]; ok {
+						if m.Warm {
+							st.Warm = maxInt(st.Warm, 1)
+						} else {
+							st.Cold = maxInt(st.Cold, 1)
+						}
+						models[modelName] = st
+					}
+				}
+			}
+		}
+
+		// build types.Pipelines for this orchestrator
+		orchCap := types.OrchestratorCapability{Address: orch.Address}
+
+		for pt, modelsMap := range pipelineModels {
+			p := types.Pipeline{Type: pt}
+			for modelName, st := range modelsMap {
+				p.Models = append(p.Models, types.Model{
+					Name:   modelName,
+					Status: st,
+				})
+			}
+			orchCap.Pipelines = append(orchCap.Pipelines, p)
+		}
+
+		out.Orchestrators = append(out.Orchestrators, orchCap)
+	}
+
+	s.logger.DebugContext(ctx, "pipelines fetched (from network capabilities)",
+		slog.Int("orchestrators", len(out.Orchestrators)))
+
+	return &out, nil
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // PostStats posts job statistics to the Leaderboard API.
@@ -134,7 +239,7 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	
+
 	// Marshal the stats data into JSON format.
 	input, err := json.Marshal(stats)
 	if err != nil {
