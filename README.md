@@ -102,17 +102,20 @@ This file configures the AI Job Tester application.
 | `metricsApiEndpoint`       | The URL to the Leaderboard API [post_stats endpoint](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support#api-reference)           |
 | `metricsSecret`            | The `SECRET` key used by the Leaderboard API Server.                                                                                                                                               |
 | `broadcasterJobEndpoint`   | The URL to the Livepeer Gateway AI Job Endpoint.                                                                                                                                                   |
-| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint. See note regarding `Orchestrator Discovery for Live Jobs`.                                                                                                                                                     |
+| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint. See note regarding `Orchestrator Discovery for Live Jobs`.                                                                                           |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
-| `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission. |
-| `liveVideo.mediaServerURL`      | Base ingest URL used when pushing the test stream (the tester appends a dynamic stream key). and by `ffprobe` to measure output (the tester appends the dyanmic stream key followed by `-out`). |
-| `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests. |
-| `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. |
-| `liveVideo.probeGracePeriodSeconds` | Maximum seconds to wait for the Gateway `/live/video-to-video/{stream}/status` endpoint to report the stream as ready before failing the test. |
-| `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs. |
-| `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream. |
-| `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream. |
-| `liveVide.MaxProbeAttempts` | Maximum attempts made to probe the stream playback when scoring the stream. |
+| `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission.                                                                                   |
+| `liveVideo.mediaServerURL`      | Base ingest URL used when pushing the test stream (the tester appends a dynamic stream key). and by `ffprobe` to measure output (the tester appends the dyanmic stream key followed by `-out`).    |
+| `liveVideo.testVideoPath`  | The path to the video asset to be used for live video tests.                                                                                                                                       |
+| `liveVideo.testDurationSeconds` | Duration, in seconds, to collect live metrics for each test. _(default: 30)_                                                                                                                       |
+| `liveVideo.statusPollTimeoutSeconds` | Maximum seconds to wait for the Gateway `/live/video-to-video/{stream}/status` endpoint to report the stream as ready before failing the test. _(default: 20)_                                     |
+| `liveVideo.statusPollIntervalSeconds` | Interval, in seconds, between status poll requests to check if the stream is ready. _(default: 1)_                                                                                                 |
+| `liveVideo.metricRetryDelayMilliseconds` | Delay, in milliseconds, between retry attempts when collecting metrics from the stream. _(default: 200)_                                                                                           |
+| `liveVideo.maxMetricAttempts` | Maximum number of attempts to collect metrics from the stream before failing. _(default: 300)_                                                                                                     |
+| `liveVideo.maxProbeAttempts` | Maximum attempts made to probe the stream playback when scoring the stream. _(default: 5)_                                                                                                         |
+| `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs.                                   |
+| `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream.                                                                                                                                                    |
+| `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream.                                                                                                                               |
 
 _**Note:**_ pipelines that require input assets (images or audio) the test files are located in the `tests-assets/` folder. When adding new pipelines, make sure to update the ai job submission logic in `internal/server/server.go` `SendTestJob` function.
 
@@ -141,7 +144,7 @@ Also, the `aiJobTesterStream` stream key prefix is defined in the go code and an
 
 1. The tester determines whether a job is live by inspecting the pipeline configuration (`live: true`). Live jobs push the static fixture video to the Gateway via RTMP using the parameters defined in the pipeline block.
 2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using `aiJobTesterStream` prefix for the stream key.
-3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `probeGracePeriodSeconds` elapses.
+3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `statusPollTimeoutSeconds` elapses.
 4. Once the stream is ready the tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
 5. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
 6. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, readiness duration, initial latency, and a normalized performance score) before being posted to the Leaderboard.
@@ -162,7 +165,7 @@ The normalized score that surfaces in the stats payload combines the above measu
 - **Latency component** – Compares the latency observed after the Gateway reported readiness to `liveVideo.maxInitialLatencySeconds`, also clamped to `0..1`. If the max is omitted, latency defaults to a perfect score.
 - **Final score** – A weighted average (`0.6 * FPS + 0.4 * latency`) stored in `stats.stream_performance_score`.
 
-Choose `probeGracePeriodSeconds` to reflect how long the Gateway normally needs to prepare a pipeline. The tester fails the run if the Gateway never reports readiness within that window; otherwise the measured warm-up time is subtracted from the latency score so only post-ready latency impacts the final score. `maxInitialLatencySeconds` should capture how quickly the first frame should arrive once the stream is ready.
+Choose `statusPollTimeoutSeconds` to reflect how long the Gateway normally needs to prepare a pipeline. The tester fails the run if the Gateway never reports readiness within that window; otherwise the measured warm-up time is subtracted from the latency score so only post-ready latency impacts the final score. `maxInitialLatencySeconds` should capture how quickly the first frame should arrive once the stream is ready.
 
 ##### Example Configuration
 ```json
@@ -265,7 +268,7 @@ Choose `probeGracePeriodSeconds` to reflect how long the Gateway normally needs 
         "max_tokens": 256,
         "prompt": "how many characters are in an ethereum address?"
       }
-    }
+    },
     {
       "name": "Live video to video",
       "uri": "live-video-to-video",

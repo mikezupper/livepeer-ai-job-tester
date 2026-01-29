@@ -70,3 +70,50 @@ type OrchestratorCapability struct {
 type Pipelines struct {
 	Orchestrators []OrchestratorCapability `json:"orchestrators"`
 }
+type NetworkCapabilitiesResponse struct {
+	CapabilityNames map[string]string     `json:"capabilities_names"`
+	Orchestrators   []NetworkOrchestrator `json:"orchestrators"`
+}
+
+type NetworkOrchestrator struct {
+	Address      string                  `json:"address"`
+	LocalAddress string                  `json:"local_address"`
+	OrchURI      string                  `json:"orch_uri"`
+	Capabilities NetworkOrchCapabilities `json:"capabilities"`
+	Hardware     []NetworkHardware       `json:"hardware"`
+}
+
+type NetworkOrchCapabilities struct {
+	Constraints NetworkOrchConstraints `json:"constraints"`
+}
+
+type NetworkOrchConstraints struct {
+	MinVersion    string                                    `json:"minVersion"`
+	PerCapability map[string]NetworkCapabilityPerCapability `json:"PerCapability"`
+}
+
+type NetworkCapabilityPerCapability struct {
+	Models map[string]NetworkCapabilityModelInfo `json:"models"`
+}
+
+type NetworkCapabilityModelInfo struct {
+	Warm          bool   `json:"warm"`
+	Capacity      int    `json:"capacity"`
+	CapacityInUse int    `json:"capacity_in_use"`
+	RunnerVersion string `json:"runnerVersion"`
+}
+
+type NetworkHardware struct {
+	Pipeline string                 `json:"pipeline"`
+	ModelID  string                 `json:"model_id"`
+	GPUInfo  map[string]GPUInfoItem `json:"gpu_info"`
+}
+
+type GPUInfoItem struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Major       int    `json:"major"`
+	Minor       int    `json:"minor"`
+	MemoryFree  uint64 `json:"memory_free"`
+	MemoryTotal uint64 `json:"memory_total"`
+}

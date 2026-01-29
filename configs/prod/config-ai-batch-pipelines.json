@@ -1,12 +1,12 @@
 {
-  "region": "NYC",
+  "region": "SEA",
   "jobType" : "ai",
   "internalWebServerPort": "7934",
   "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
-  "metricsSecret": "PUT_YOUR_SECRET_KEY",
-  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "metricsSecret": "PUT_SECRET_KEY_HERE",
+  "broadcasterJobEndpoint": "http://rtav-tester-gateway:8935",
+  "broadcasterCliEndpoint": "http://rtav-tester-gateway:7935",
   "broadcasterRequestToken": "PUT_OPTIONAL_BEARER_TOKEN_HERE",
   "logger": {
     "level": "debug",
@@ -105,7 +105,7 @@
       "parameters": {
         "model":"meta-llama/Meta-Llama-3.1-8B-Instruct",
         "messages":[{"role":"system","content":"I am blockchain expert"},{"role":"user","content":"how many characters are in an ethereum address?"}],
-        "max_tokens":8192,
+        "max_tokens":256,
         "stream":false
       }
     },

@@ -296,6 +296,7 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 	}
 	copiedParams["model_id"] = model
 	copiedParams["pipeline"] = model
+	copiedParams["orchestrator"] = orchServiceUri
 
 	// Marshal the parameters into JSON format.
 	input, err := json.Marshal(copiedParams)
@@ -360,7 +361,7 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 
 		// Non-live job submission
 		// Send the HTTP request
-		url := fmt.Sprintf("%s/%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri)
+		url := fmt.Sprintf("%s/%s?orchestrator=%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri, orchServiceUri)
 		var req *http.Request
 		if cfgPipeline.ContentType == "application/json" {
 			req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(input))
@@ -451,10 +452,13 @@ func (ss *EmbeddedWebhookServer) executeLiveStreamTest(ctx context.Context, stat
 		slog.String("playback_url", playbackURL))
 
 	metrics, err := ss.ffmpegClient.RunStream(ctx, ingestURL, playbackURL, videoPath, ffmpeg.StreamOptions{
-		StatusEndpoint:    statusEndpoint,
-		StatusPollTimeout: time.Duration(liveCfg.ProbeGracePeriodSeconds) * time.Second,
-		TestDuration:      time.Duration(liveCfg.TestDurationSeconds) * time.Second,
-		MaxProbeAttempts:  liveCfg.MaxProbeAttempts,
+		StatusEndpoint:     statusEndpoint,
+		StatusPollInterval: time.Duration(liveCfg.StatusPollIntervalSeconds) * time.Second,
+		StatusPollTimeout:  time.Duration(liveCfg.StatusPollTimeoutSeconds) * time.Second,
+		TestDuration:       time.Duration(liveCfg.TestDurationSeconds) * time.Second,
+		MetricRetryDelay:   time.Duration(liveCfg.MetricRetryDelayMilliseconds) * time.Millisecond,
+		MaxMetricAttempts:  liveCfg.MaxMetricAttempts,
+		MaxProbeAttempts:   liveCfg.MaxProbeAttempts,
 	})
 	if err != nil {
 		stats.RoundTripTime = time.Since(startTime).Seconds()
@@ -601,7 +605,7 @@ func (ss *EmbeddedWebhookServer) handleOrchestrators(w http.ResponseWriter, r *h
 // findParametersByPipelineName searches for a pipeline by name in the configuration file.
 func (ss *EmbeddedWebhookServer) findParametersByPipelineName(pipelineName string) (*config.Pipeline, bool) {
 	for _, pipeline := range ss.config.Pipelines {
-		if pipeline.Name == pipelineName {
+		if pipeline.Uri == pipelineName {
 			return &pipeline, true
 		}
 	}

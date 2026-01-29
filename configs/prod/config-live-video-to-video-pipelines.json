@@ -4,11 +4,11 @@
   "jobType": "ai",
   "internalWebServerPort": "7934",
   "internalWebServerAddress": "0.0.0.0",
-  "metricsApiEndpoint": "https://lpc-leaderboard-serverless.vercel.app/api/post_stats",
-  "metricsSecret": "my-secret-key",
+  "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
+  "metricsSecret": "PUT_SECRET_KEY_HERE",
   "broadcasterJobEndpoint": "http://rtav-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://rtav-registry-tester-gateway:7935",
-  "broadcasterRequestToken": "ef78f3aa-40fa-4cf5-8588-4a3480e97aed",
+  "broadcasterCliEndpoint": "http://rtav-tester-gateway:7935",
+  "broadcasterRequestToken": "PUT_OPTIONAL_BEARER_TOKEN_HERE",
   "logger": {
     "level": "INFO",
     "format": "TEXT",
@@ -21,11 +21,14 @@
   "liveVideo": {
     "mediaServerURL": "rtmp://live-video-to-video-mediamtx:1935",
     "testVideoPath": "test-assets/live-test-video.mp4",
-    "testDurationSeconds": 10,
-    "probeGracePeriodSeconds": 20,
+    "testDurationSeconds": 30,
+    "statusPollTimeoutSeconds": 20,
+    "statusPollIntervalSeconds": 1,
+    "metricRetryDelayMilliseconds": 200,
+    "maxMetricAttempts": 300,
+    "maxProbeAttempts": 5,
     "targetFPS": 12,
     "maxInitialLatencySeconds": 8,
-    "maxProbeAttempts": 5,
     "orchMapping": {
       "0x08f76e106a2dd4f6385efc8ea6c69a2816082461": [
         "https://ai.brzeczyszczykiewicz.work:8935",
@@ -77,7 +80,7 @@
         "https://ai3.ad-astra.live:9988"
       ],
       "0x3bbe84023c11c4874f493d70b370d26390e3c580": [
-      "https://dexpeer-ai.code4.us:8935"
+        "https://dexpeer-ai.code4.us:8935"
       ],
       "0x4416a274f86e1db860b513548b672154d43b81b2": [
         "https://livepeer-msi-1.prod.dcg-labs.co:8935",

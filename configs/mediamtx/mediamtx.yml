@@ -68,7 +68,8 @@ authInternalUsers:
         path:
       - action: playback
         path:
-      - action: api # enable api access for job tester
+      - action: api
+        path:
 
     # Default administrator.
     # This allows to use API, metrics and PPROF without authentication,
@@ -457,7 +458,7 @@ pathDefaults:
   # Path of recording segments.
   # Extension is added automatically.
   # Available variables are %path (path name), %Y %m %d %H %M %S %f %s (time in strftime format)
-  recordPath: /app/recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f
   # Format of recorded segments.
   # Available formats are "fmp4" (fragmented MP4) and "mpegts" (MPEG-TS).
   recordFormat: fmp4
@@ -644,7 +645,7 @@ pathDefaults:
   #   a regular expression.
   # * MTX_SOURCE_TYPE: source type
   # * MTX_SOURCE_ID: source ID
-  runOnReady: 
+  runOnReady:
   # Restart the command if it exits.
   runOnReadyRestart: no
   # Command to run when the stream is not available anymore.
@@ -703,7 +704,7 @@ paths:
   # call Gateway live video-to-video API to start a stream
   # Dynamic path for streams starting with "aiJobTesterStream"
   "~^aiJobTesterStream.*$":
-    runOnReady: curl http://tester-gateway:8935/live/video-to-video/$MTX_PATH/start -F source_id=$MTX_SOURCE_ID -F source_type=$MTX_SOURCE_TYPE -F query=$MTX_QUERY -verbose
+    runOnReady: curl http://10.0.0.135:8935/live/video-to-video/$MTX_PATH/start -F source_id=$MTX_SOURCE_ID -F source_type=$MTX_SOURCE_TYPE -F query=$MTX_QUERY --verbose
     record: no
     recordPath: /app/recordings/%path-in/%Y-%m-%d_%H-%M-%S
     recordFormat: mpegts

@@ -38,10 +38,11 @@ type StreamOptions struct {
 
 const (
 	defaultStatusPollInterval = 1 * time.Second
-	defaultStatusPollTimeout  = 30 * time.Second
+	defaultStatusPollTimeout  = 20 * time.Second
 	defaultTestDuration       = 30 * time.Second
 	defaultMetricRetryDelay   = 200 * time.Millisecond
-	defaultMaxMetricAttempts  = 5
+	defaultMaxMetricAttempts  = 300
+	defaultMaxProbeAttempts   = 5
 )
 
 var (
@@ -89,6 +90,9 @@ func (o StreamOptions) withDefaults() StreamOptions {
 	}
 	if o.MaxMetricAttempts <= 0 {
 		o.MaxMetricAttempts = defaultMaxMetricAttempts
+	}
+	if o.MaxProbeAttempts <= 0 {
+		o.MaxProbeAttempts = defaultMaxProbeAttempts
 	}
 	return o
 }

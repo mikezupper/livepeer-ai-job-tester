@@ -39,14 +39,17 @@ type Pipeline struct {
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
 type LiveVideoConfig struct {
-	MediaServerURL          string              `json:"mediaServerURL"`
-	TestVideoPath           string              `json:"testVideoPath"`
-	TestDurationSeconds     int                 `json:"testDurationSeconds"`
-	ProbeGracePeriodSeconds int                 `json:"probeGracePeriodSeconds"`
-	OrchMapping             map[string][]string `json:"orchMapping,omitempty"`
-	TargetFPS               float64             `json:"targetFPS,omitempty"`
-	MaxInitialLatencySeconds float64            `json:"maxInitialLatencySeconds,omitempty"`
-	MaxProbeAttempts         int                 `json:"maxProbeAttempts,omitempty"`
+	MediaServerURL               string              `json:"mediaServerURL"`
+	TestVideoPath                string              `json:"testVideoPath"`
+	TestDurationSeconds          int                 `json:"testDurationSeconds"`
+	StatusPollTimeoutSeconds     int                 `json:"statusPollTimeoutSeconds"`
+	StatusPollIntervalSeconds    int                 `json:"statusPollIntervalSeconds,omitempty"`
+	MetricRetryDelayMilliseconds int                 `json:"metricRetryDelayMilliseconds,omitempty"`
+	MaxMetricAttempts            int                 `json:"maxMetricAttempts,omitempty"`
+	MaxProbeAttempts             int                 `json:"maxProbeAttempts,omitempty"`
+	OrchMapping                  map[string][]string `json:"orchMapping,omitempty"`
+	TargetFPS                    float64             `json:"targetFPS,omitempty"`
+	MaxInitialLatencySeconds     float64             `json:"maxInitialLatencySeconds,omitempty"`
 }
 
 // LoggerConfig exposes runtime log configuration knobs.

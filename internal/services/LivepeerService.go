@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
-	"net/http"
-
 	"livepeer-job-tester/internal/config"
 	"livepeer-job-tester/internal/types"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 // LivepeerService defines the interface for interacting with the Livepeer Gateway and Leaderboard API.
@@ -77,6 +79,7 @@ func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.O
 
 	var filtered []types.Orchestrator
 	for _, orchestrator := range orchestrators {
+		orchestrator.Address = strings.ToLower(strings.TrimSpace(orchestrator.Address))
 		if orchestrator.Active && orchestrator.ServiceURI != "" {
 			filtered = append(filtered, orchestrator)
 		}
@@ -90,13 +93,18 @@ func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.O
 }
 
 // FetchPipelines fetches the available pipeline configurations from the Livepeer Gateway.
-// The response contains the pipelines data, which is unmarshalled into the Pipelines struct.
+// - pipeline/model list comes from `hardware[]` (pipeline/model_id)
+// - warm/capacity/runnerVersion comes from `capabilities.constraints.PerCapability[capID].models[model_id]`
+// - logs GPU info (if available)
+// - emits per-orchestrator summary (WARN if missing constraints)
+// - emits per-orchestrator runnerVersion min/max (semver-ish)
+// - emits global summary across all orchestrators
 func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipelines, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	url := fmt.Sprintf("%s/getOrchestratorAICapabilities", s.config.BroadcasterCliEndpoint)
+	url := fmt.Sprintf("%s/getNetworkCapabilities", s.config.BroadcasterCliEndpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -117,14 +125,313 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 		return nil, err
 	}
 
-	var pipelines types.Pipelines
-	if err := json.Unmarshal(body, &pipelines); err != nil {
+	var netCaps types.NetworkCapabilitiesResponse
+	if err := json.Unmarshal(body, &netCaps); err != nil {
 		return nil, err
 	}
 
-	s.logger.DebugContext(ctx, "pipelines fetched", slog.Int("orchestrators", len(pipelines.Orchestrators)))
+	// slugified capability name -> capability ID
+	slugToCapID := map[string]string{}
+	for capID, capName := range netCaps.CapabilityNames {
+		slugToCapID[slugifyCapabilityName(capName)] = capID
+	}
+
+	// -------- Global summary counters --------
+	totalOrchs := 0
+	totalPipelines := 0
+	totalModels := 0
+	totalGPUs := 0
+	totalMissingConstraints := 0
+	orchsWithMissingConstraints := 0
+
+	// Track distinct pipelines/models globally (nice-to-have)
+	globalPipelineSet := map[string]bool{}
+	globalModelSet := map[string]bool{}
+	globalRunnerVersions := []string{}
+
+	var pipelines types.Pipelines
+	for _, orch := range netCaps.Orchestrators {
+		totalOrchs++
+		orchAddr := strings.ToLower(strings.TrimSpace(orch.Address))
+		orchCap := types.OrchestratorCapability{Address: orchAddr}
+		// -------- Per-orchestrator summary counters --------
+		pipelineCount := 0
+		modelCount := 0
+		gpuCount := 0
+		missingConstraintCount := 0
+
+		// Track runner versions seen for this orch for min/max
+		orchRunnerVersions := []string{}
+
+		// Group models by pipeline (from hardware)
+		pipelineByName := map[string]*types.Pipeline{}
+		seenModel := map[string]map[string]bool{} // pipeline -> model -> seen
+
+		for _, hw := range orch.Hardware {
+			pName := hw.Pipeline
+			globalPipelineSet[pName] = true
+
+			p, exists := pipelineByName[pName]
+			if !exists {
+				p = &types.Pipeline{Type: pName}
+				pipelineByName[pName] = p
+				pipelineCount++
+			}
+
+			if _, ok := seenModel[pName]; !ok {
+				seenModel[pName] = map[string]bool{}
+			}
+			alreadyAdded := seenModel[pName][hw.ModelID]
+
+			// Find constraints by matching the capability slug to the hardware pipeline
+			capID := slugToCapID[pName]
+
+			modelInfo, hasModelInfo := func() (types.NetworkCapabilityModelInfo, bool) {
+				if capID == "" {
+					return types.NetworkCapabilityModelInfo{}, false
+				}
+				cap, ok := orch.Capabilities.Constraints.PerCapability[capID]
+				if !ok {
+					return types.NetworkCapabilityModelInfo{}, false
+				}
+				mi, ok := cap.Models[hw.ModelID]
+				return mi, ok
+			}()
+
+			warm := false
+			capacity := 0
+			runnerVersion := ""
+			if hasModelInfo {
+				warm = modelInfo.Warm
+				capacity = modelInfo.Capacity
+				runnerVersion = strings.TrimSpace(modelInfo.RunnerVersion)
+				if runnerVersion != "" {
+					orchRunnerVersions = append(orchRunnerVersions, runnerVersion)
+					globalRunnerVersions = append(globalRunnerVersions, runnerVersion)
+				}
+			} else {
+				missingConstraintCount++
+				totalMissingConstraints++
+			}
+
+			// Populate returned structure (dedupe pipeline/model)
+			if !alreadyAdded {
+				modelCount++
+				totalModels++
+				globalModelSet[hw.ModelID] = true
+
+				m := types.Model{Name: hw.ModelID}
+
+				// Store capacity in Warm/Cold buckets (still compatible with existing code)
+				if warm {
+					if capacity > 0 {
+						m.Status.Warm = capacity
+					} else {
+						m.Status.Warm = 1
+					}
+				} else {
+					if capacity > 0 {
+						m.Status.Cold = capacity
+					} else {
+						m.Status.Cold = 1
+					}
+				}
+
+				p.Models = append(p.Models, m)
+				seenModel[pName][hw.ModelID] = true
+			}
+
+			// GPU info logging (if available) + count
+			if len(hw.GPUInfo) > 0 {
+				// make logging stable (nice-to-have)
+				keys := make([]string, 0, len(hw.GPUInfo))
+				for k := range hw.GPUInfo {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+
+				gpuCount += len(hw.GPUInfo)
+				totalGPUs += len(hw.GPUInfo)
+
+				for _, idx := range keys {
+					gpu := hw.GPUInfo[idx]
+					s.logger.DebugContext(ctx, "orch model capability",
+						slog.String("orch", orchAddr),
+						slog.String("pipeline", pName),
+						slog.String("model", hw.ModelID),
+						slog.Bool("warm", warm),
+						slog.Int("capacity", capacity),
+						slog.String("runnerVersion", runnerVersion),
+						slog.String("gpuIndex", idx),
+						slog.String("gpuName", gpu.Name),
+						slog.Uint64("memoryFree", gpu.MemoryFree),
+						slog.Uint64("memoryTotal", gpu.MemoryTotal),
+						slog.Bool("hasConstraint", hasModelInfo),
+					)
+				}
+			} else {
+				s.logger.DebugContext(ctx, "orch model capability",
+					slog.String("orch", orchAddr),
+					slog.String("pipeline", pName),
+					slog.String("model", hw.ModelID),
+					slog.Bool("warm", warm),
+					slog.Int("capacity", capacity),
+					slog.String("runnerVersion", runnerVersion),
+					slog.Bool("hasConstraint", hasModelInfo),
+				)
+			}
+		}
+
+		// Attach pipelines to orchCap (even if empty, we still include the orch)
+		for _, p := range pipelineByName {
+			orchCap.Pipelines = append(orchCap.Pipelines, *p)
+		}
+		pipelines.Orchestrators = append(pipelines.Orchestrators, orchCap)
+
+		// Update global pipeline count by unique pipelines observed per orch
+		totalPipelines += pipelineCount
+
+		// Per-orchestrator runnerVersion min/max (semver-ish)
+		minRV, maxRV := minMaxSemverish(orchRunnerVersions)
+
+		// Per-orchestrator summary line (WARN if missing constraints)
+		if missingConstraintCount > 0 {
+			orchsWithMissingConstraints++
+			s.logger.WarnContext(ctx, "pipelines discovered for orch (constraints missing)",
+				slog.String("orch", orchAddr),
+				slog.Int("pipelines", pipelineCount),
+				slog.Int("models", modelCount),
+				slog.Int("gpus", gpuCount),
+				slog.Int("missingConstraints", missingConstraintCount),
+				slog.String("runnerVersionMin", minRV),
+				slog.String("runnerVersionMax", maxRV),
+			)
+		} else {
+			s.logger.InfoContext(ctx, "pipelines discovered for orch",
+				slog.String("orch", orchAddr),
+				slog.Int("pipelines", pipelineCount),
+				slog.Int("models", modelCount),
+				slog.Int("gpus", gpuCount),
+				slog.Int("missingConstraints", missingConstraintCount),
+				slog.String("runnerVersionMin", minRV),
+				slog.String("runnerVersionMax", maxRV),
+			)
+		}
+	}
+
+	// -------- Global summary (nice-to-have) --------
+	globalMinRV, globalMaxRV := minMaxSemverish(globalRunnerVersions)
+
+	s.logger.InfoContext(ctx, "pipelines discovery complete",
+		slog.Int("orchs", totalOrchs),
+		slog.Int("orchsWithMissingConstraints", orchsWithMissingConstraints),
+		slog.Int("totalMissingConstraints", totalMissingConstraints),
+		slog.Int("totalPipelinesObserved", totalPipelines),
+		slog.Int("totalModelsObserved", totalModels),
+		slog.Int("totalGPUsObserved", totalGPUs),
+		slog.Int("distinctPipelines", len(globalPipelineSet)),
+		slog.Int("distinctModels", len(globalModelSet)),
+		slog.String("runnerVersionMin", globalMinRV),
+		slog.String("runnerVersionMax", globalMaxRV),
+	)
 
 	return &pipelines, nil
+}
+
+// slugifyCapabilityName normalizes a capability name from `capabilities_names` into
+// the `hardware.pipeline` style used by the broadcaster CLI.
+func slugifyCapabilityName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, ".", "")
+	s = strings.ReplaceAll(s, "/", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+	s = strings.Join(strings.Fields(s), "-")
+	return s
+}
+
+// minMaxSemverish returns min/max runner versions from a list.
+// - Tries to compare as semver-ish numeric dotted versions (e.g., "0.14.1").
+// - Falls back to lexical compare if parsing fails.
+func minMaxSemverish(versions []string) (string, string) {
+	clean := make([]string, 0, len(versions))
+	for _, v := range versions {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			clean = append(clean, v)
+		}
+	}
+	if len(clean) == 0 {
+		return "", ""
+	}
+
+	minV := clean[0]
+	maxV := clean[0]
+	for _, v := range clean[1:] {
+		if semverishLess(v, minV) {
+			minV = v
+		}
+		if semverishLess(maxV, v) {
+			maxV = v
+		}
+	}
+	return minV, maxV
+}
+
+func semverishLess(a, b string) bool {
+	pa, oka := parseSemverish(a)
+	pb, okb := parseSemverish(b)
+	if oka && okb {
+		n := len(pa)
+		if len(pb) > n {
+			n = len(pb)
+		}
+		for i := 0; i < n; i++ {
+			ai := 0
+			bi := 0
+			if i < len(pa) {
+				ai = pa[i]
+			}
+			if i < len(pb) {
+				bi = pb[i]
+			}
+			if ai != bi {
+				return ai < bi
+			}
+		}
+		// identical numerically; shorter string considered "smaller"
+		return len(a) < len(b)
+	}
+	// fallback lexical
+	return a < b
+}
+
+func parseSemverish(v string) ([]int, bool) {
+	// strip leading 'v'
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "v") || strings.HasPrefix(v, "V") {
+		v = v[1:]
+	}
+	parts := strings.Split(v, ".")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		// stop at first non-numeric tail (e.g. "0.14.1-rc1")
+		numStr := p
+		for i := 0; i < len(numStr); i++ {
+			if numStr[i] < '0' || numStr[i] > '9' {
+				numStr = numStr[:i]
+				break
+			}
+		}
+		if numStr == "" {
+			return nil, false
+		}
+		n, err := strconv.Atoi(numStr)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
 }
 
 // PostStats posts job statistics to the Leaderboard API.
@@ -134,7 +441,7 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	
+
 	// Marshal the stats data into JSON format.
 	input, err := json.Marshal(stats)
 	if err != nil {

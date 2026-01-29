@@ -1,6 +1,6 @@
 services:
   ai-job-tester:
-    image: ai-job-tester:latest
+    image: tztcloud/ai-job-tester:2.0-5
     container_name: "ai-job-tester"
     restart: unless-stopped
     volumes:
@@ -8,15 +8,18 @@ services:
     environment:
       - TZ=UTC
       - CRONTAB_SCHEDULE=0 */2 * * *
-      - CONFIG_FILE=/app/configs/config.json
+      - CONFIG_FILE=/app/configs/config-ai-batch-pipelines.json
     depends_on:
       - tester-gateway
 
   tester-gateway:
-    image: tztcloud/go-livepeer:v0.8.6
+    image: tztcloud/go-livepeer:v0.8.9-NaaP-M1
     restart: unless-stopped
     hostname: ai-tester-gateway
     container_name: ai-tester-gateway
+    environment:
+      - LIVEPEER_OS_HTTP_TIMEOUT=8s
+      - LIVEPEER_TESTER_GATEWAY_ENABLED=true
     volumes:
       - tester-gateway-lpData:/root/.lpData
     command: '-ethUrl=YOUR_RPC_URL
@@ -34,11 +37,8 @@ services:
               -blockPollingInterval=20
               -httpIngest=true
               -httpAddr=0.0.0.0:8935
-              -orchMinLivepeerVersion=v0.7.9-ai.3
-              -discoveryTimeout=750ms
-              -webhookRefreshInterval=0
-              -aiSessionTimeout=0
-              -orchWebhookUrl=http://ai-job-tester:7934/orchestrators
+              -orchMinLivepeerVersion=v0.8.6
+              -aiServiceRegistry=true
               '
 
 volumes:

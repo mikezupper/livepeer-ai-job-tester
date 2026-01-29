@@ -5,8 +5,8 @@
   "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "PUT_YOUR_SECRET_KEY",
-  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterJobEndpoint": "http://10.0.0.135:8935",
+  "broadcasterCliEndpoint": "http://localhost:7935",
   "broadcasterRequestToken": "PUT_OPTIONAL_BEARER_TOKEN_HERE",
   "logger": {
     "level": "debug",
