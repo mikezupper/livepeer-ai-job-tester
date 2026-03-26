@@ -1,20 +1,55 @@
 package types
 
+import "encoding/json"
+
 // Stats represents the raw statistics per test stream, capturing details such as
 // the region, pipeline used, model details, success rate, and round-trip time.
 // It also stores errors encountered during the test and a timestamp.
 type Stats struct {
-	Region              string  `json:"region"`
-	Pipeline            string  `json:"pipeline"`
-	Model               string  `json:"model"`
-	ModelIsWarm         bool    `json:"model_is_warm"`
-	InputParameters     string  `json:"input_parameters"`
-	ResponsePayload     string  `json:"response_payload"`
-	Orchestrator        string  `json:"orchestrator"`
-	SuccessRate         int     `json:"success_rate"`
-	RoundTripTime       float64 `json:"round_trip_time"`
-	Errors              []Error `json:"errors"`
-	Timestamp           int64   `json:"timestamp"`
+	Region             string   `json:"region"`
+	Pipeline           string   `json:"pipeline"`
+	Model              string   `json:"model"`
+	ModelIsWarm        bool     `json:"model_is_warm"`
+	InputParameters    string   `json:"input_parameters"`
+	ResponsePayload    string   `json:"response_payload"`
+	Orchestrator       string   `json:"orchestrator"`
+	SuccessRate        int      `json:"success_rate"`
+	RoundTripTime      float64  `json:"round_trip_time"`
+	Errors             []Error  `json:"errors"`
+	Timestamp          int64    `json:"timestamp"`
+	TestOutcome        string   `json:"test_outcome,omitempty"`
+	UnscoredReason     string   `json:"unscored_reason,omitempty"`
+	PromptID           string   `json:"prompt_id,omitempty"`
+	PromptComplexity   string   `json:"prompt_complexity,omitempty"`
+	PromptVerification string   `json:"prompt_verification,omitempty"`
+	PromptConfirmed    *bool    `json:"prompt_confirmed,omitempty"`
+	StreamValid        *bool    `json:"stream_valid,omitempty"`
+	StreamID           string   `json:"stream_id,omitempty"`
+	ParamsHash         string   `json:"params_hash,omitempty"`
+	DeferAttempts      int      `json:"defer_attempts,omitempty"`
+	DebugArtifacts     []string `json:"debug_artifacts,omitempty"`
+
+	OmitScore bool `json:"-"`
+}
+
+// MarshalJSON preserves the historical stats shape while allowing live runs to
+// omit score fields for outcomes that should not affect leaderboard scoring.
+func (s Stats) MarshalJSON() ([]byte, error) {
+	type alias Stats
+	payload := map[string]interface{}{}
+
+	raw, err := json.Marshal(alias(s))
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if s.OmitScore {
+		delete(payload, "success_rate")
+		delete(payload, "round_trip_time")
+	}
+	return json.Marshal(payload)
 }
 
 // Error represents the details of an error encountered during a test job.
@@ -50,8 +85,12 @@ type Status struct {
 
 // Model represents a model within a pipeline, including its name and status.
 type Model struct {
-	Name   string `json:"name"`
-	Status Status `json:"status"`
+	Name          string `json:"name"`
+	Status        Status `json:"status"`
+	Warm          bool   `json:"warm,omitempty"`
+	IdleCapacity  int    `json:"idle_capacity,omitempty"`
+	CapacityInUse int    `json:"capacity_in_use,omitempty"`
+	RunnerVersion string `json:"runner_version,omitempty"`
 }
 
 // Pipeline represents a pipeline, including its type and the models it contains.

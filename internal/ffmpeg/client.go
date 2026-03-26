@@ -22,7 +22,7 @@ type Client interface {
 
 // StreamStatusClient defines the behaviour needed to wait for Gateway readiness.
 type StreamStatusClient interface {
-	WaitReady(ctx context.Context, endpoint string, timeout, interval time.Duration) (time.Duration, error)
+	WaitReady(ctx context.Context, endpoint string, timeout, interval time.Duration) (*status.LiveStatusSnapshot, time.Duration, error)
 }
 
 // StreamOptions tunes the behaviour of the ffmpeg client.
@@ -31,6 +31,7 @@ type StreamOptions struct {
 	StatusPollInterval time.Duration
 	StatusPollTimeout  time.Duration
 	TestDuration       time.Duration
+	ManualAttachDelay  time.Duration
 	MetricRetryDelay   time.Duration
 	MaxMetricAttempts  int
 	MaxProbeAttempts   int
@@ -110,7 +111,7 @@ func (c *client) waitForReadiness(ctx context.Context, ffmpegErrCh <-chan error,
 	readyCtx, readyCancel := context.WithCancel(ctx)
 	readyCh := make(chan readinessResult, 1)
 	go func() {
-		dur, err := c.statusClient.WaitReady(readyCtx, opts.StatusEndpoint, opts.StatusPollTimeout, opts.StatusPollInterval)
+		_, dur, err := c.statusClient.WaitReady(readyCtx, opts.StatusEndpoint, opts.StatusPollTimeout, opts.StatusPollInterval)
 		readyCh <- readinessResult{duration: dur, err: err}
 	}()
 
@@ -121,6 +122,9 @@ func (c *client) waitForReadiness(ctx context.Context, ffmpegErrCh <-chan error,
 			if errors.Is(res.err, status.ErrTimeout) {
 				// the live video status endpoint did not report ready in time / assume Orch did not send in segments in time for live video to become healthy
 				return 0, fmt.Errorf("%w: %v", ErrGatewayTimeout, res.err)
+			}
+			if errors.Is(res.err, status.ErrOrchestratorBusy) || errors.Is(res.err, status.ErrNoOrchestratorsAvailable) || errors.Is(res.err, status.ErrGatewayStreamFailed) {
+				return 0, fmt.Errorf("%w: %v", ErrStreamAborted, res.err)
 			}
 			// other errors are likely network related - treat as tester issues
 			return 0, fmt.Errorf("gateway readiness failed: %w", res.err)
@@ -165,8 +169,16 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 		default:
 		}
 
+		measurementStart := push.StartTime()
+		if opts.ManualAttachDelay > 0 {
+			// The manual attach window is for local debugging only. We shift the
+			// measurement start by the attach delay so pausing to open ffplay/VLC
+			// does not artificially inflate the scored latency metrics.
+			measurementStart = measurementStart.Add(opts.ManualAttachDelay)
+		}
+
 		attemptCtx, attemptCancel := context.WithCancel(context.Background())
-		metrics, metricsErr = c.collectLiveVideoMetrics(attemptCtx, playbackURL, opts.TestDuration, push.StartTime())
+		metrics, metricsErr = c.collectLiveVideoMetrics(attemptCtx, playbackURL, opts.TestDuration, measurementStart)
 		attemptCancel()
 
 		// If metrics were collected successfully, return them.
@@ -191,6 +203,32 @@ func (c *client) collectMetricsWithRetry(ctx context.Context, push *streamPush, 
 	return metrics, metricsErr
 }
 
+func (c *client) waitForManualAttachWindow(ctx context.Context, ffmpegErrCh <-chan error, playbackURL string, delay time.Duration, log *slog.Logger) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	log.InfoContext(ctx, "manual attach window open",
+		slog.String("playback", playbackURL),
+		slog.Duration("delay", delay))
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		log.InfoContext(ctx, "manual attach window complete", slog.String("playback", playbackURL))
+		return nil
+	case err := <-ffmpegErrCh:
+		if err == nil {
+			err = ErrStreamAborted
+		}
+		return fmt.Errorf("%w: %v", ErrStreamAborted, err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // RunStream pushes a test video to the ingest URL and probes playback to produce delivery metrics.
 func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVideoPath string, opts StreamOptions) (*Metrics, error) {
 	opts = opts.withDefaults()
@@ -213,6 +251,10 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 	ffmpegErrCh := push.ErrChan()
 	readyDuration, err := c.waitForReadiness(ctx, ffmpegErrCh, opts, log)
 	if err != nil {
+		push.Cancel()
+		return nil, err
+	}
+	if err := c.waitForManualAttachWindow(ctx, ffmpegErrCh, playbackURL, opts.ManualAttachDelay, log); err != nil {
 		push.Cancel()
 		return nil, err
 	}

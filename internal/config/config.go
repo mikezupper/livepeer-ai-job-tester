@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // Config represents the configuration data loaded from the JSON file.
@@ -35,21 +36,38 @@ type Pipeline struct {
 	ContentType     string                 `json:"contentType"`
 	Parameters      map[string]interface{} `json:"parameters"`
 	Live            bool                   `json:"live,omitempty"`
+	PromptVariants  []PromptVariant        `json:"promptVariants,omitempty"`
 }
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
 type LiveVideoConfig struct {
-	MediaServerURL               string              `json:"mediaServerURL"`
-	TestVideoPath                string              `json:"testVideoPath"`
-	TestDurationSeconds          int                 `json:"testDurationSeconds"`
-	StatusPollTimeoutSeconds     int                 `json:"statusPollTimeoutSeconds"`
-	StatusPollIntervalSeconds    int                 `json:"statusPollIntervalSeconds,omitempty"`
-	MetricRetryDelayMilliseconds int                 `json:"metricRetryDelayMilliseconds,omitempty"`
-	MaxMetricAttempts            int                 `json:"maxMetricAttempts,omitempty"`
-	MaxProbeAttempts             int                 `json:"maxProbeAttempts,omitempty"`
-	OrchMapping                  map[string][]string `json:"orchMapping,omitempty"`
-	TargetFPS                    float64             `json:"targetFPS,omitempty"`
-	MaxInitialLatencySeconds     float64             `json:"maxInitialLatencySeconds,omitempty"`
+	MediaServerURL               string                `json:"mediaServerURL"`
+	TestVideoPath                string                `json:"testVideoPath"`
+	TestDurationSeconds          int                   `json:"testDurationSeconds"`
+	StatusPollTimeoutSeconds     int                   `json:"statusPollTimeoutSeconds"`
+	StatusPollIntervalSeconds    int                   `json:"statusPollIntervalSeconds,omitempty"`
+	MetricRetryDelayMilliseconds int                   `json:"metricRetryDelayMilliseconds,omitempty"`
+	MaxMetricAttempts            int                   `json:"maxMetricAttempts,omitempty"`
+	MaxProbeAttempts             int                   `json:"maxProbeAttempts,omitempty"`
+	OrchMapping                  map[string][]string   `json:"orchMapping,omitempty"`
+	TargetFPS                    float64               `json:"targetFPS,omitempty"`
+	MaxInitialLatencySeconds     float64               `json:"maxInitialLatencySeconds,omitempty"`
+	DebugArtifacts               *DebugArtifactsConfig `json:"debugArtifacts,omitempty"`
+}
+
+// PromptVariant defines a single live video prompt scenario to run against an orchestrator.
+type PromptVariant struct {
+	ID         string                 `json:"id"`
+	Complexity string                 `json:"complexity"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
+// DebugArtifactsConfig controls optional live-debug artifact capture.
+type DebugArtifactsConfig struct {
+	Enabled              bool   `json:"enabled"`
+	CaptureOnFailureOnly bool   `json:"captureOnFailureOnly,omitempty"`
+	MaxFrames            int    `json:"maxFrames,omitempty"`
+	OutputDir            string `json:"outputDir,omitempty"`
 }
 
 // LoggerConfig exposes runtime log configuration knobs.
@@ -95,5 +113,64 @@ func (l *JSONConfigLoader) Load(filePath string) (*Config, error) {
 		return nil, fmt.Errorf("[JSONConfigLoader::LoadConfig] error unmarshalling JSON: %w", err)
 	}
 
+	if err := normalizeAndValidate(&config); err != nil {
+		return nil, fmt.Errorf("[JSONConfigLoader::LoadConfig] invalid configuration: %w", err)
+	}
+
 	return &config, nil
+}
+
+func normalizeAndValidate(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+
+	for idx := range cfg.Pipelines {
+		pipeline := &cfg.Pipelines[idx]
+		if pipeline.Parameters == nil {
+			pipeline.Parameters = make(map[string]interface{})
+		}
+
+		isLiveVideo := pipeline.Uri == "live-video-to-video"
+		if len(pipeline.PromptVariants) > 0 && !isLiveVideo {
+			return fmt.Errorf("pipeline %q uses promptVariants but only live-video-to-video supports that layout", pipeline.Uri)
+		}
+		if isLiveVideo {
+			if !pipeline.Live {
+				return fmt.Errorf("pipeline %q must set live=true", pipeline.Uri)
+			}
+			if len(pipeline.PromptVariants) == 0 {
+				return fmt.Errorf("pipeline %q must define promptVariants", pipeline.Uri)
+			}
+
+			seenIDs := make(map[string]struct{}, len(pipeline.PromptVariants))
+			for _, variant := range pipeline.PromptVariants {
+				id := strings.TrimSpace(variant.ID)
+				if id == "" {
+					return fmt.Errorf("pipeline %q has a promptVariant with an empty id", pipeline.Uri)
+				}
+				if _, exists := seenIDs[id]; exists {
+					return fmt.Errorf("pipeline %q has duplicate promptVariant id %q", pipeline.Uri, id)
+				}
+				seenIDs[id] = struct{}{}
+
+				switch strings.ToLower(strings.TrimSpace(variant.Complexity)) {
+				case "low", "medium", "high":
+				default:
+					return fmt.Errorf("pipeline %q promptVariant %q has invalid complexity %q", pipeline.Uri, id, variant.Complexity)
+				}
+			}
+		}
+	}
+
+	if cfg.LiveVideo != nil && cfg.LiveVideo.DebugArtifacts != nil {
+		if cfg.LiveVideo.DebugArtifacts.MaxFrames <= 0 {
+			cfg.LiveVideo.DebugArtifacts.MaxFrames = 3
+		}
+		if strings.TrimSpace(cfg.LiveVideo.DebugArtifacts.OutputDir) == "" {
+			cfg.LiveVideo.DebugArtifacts.OutputDir = "debug-artifacts/live-video"
+		}
+	}
+
+	return nil
 }

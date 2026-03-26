@@ -148,7 +148,33 @@
     {
       "name": "Live video to video",
       "uri": "live-video-to-video",
-      "live": true
+      "live": true,
+      "parameters": {
+        "safety_check": false
+      },
+      "promptVariants": [
+        {
+          "id": "watercolor-low",
+          "complexity": "low",
+          "parameters": {
+            "prompt": "watercolor painting style"
+          }
+        },
+        {
+          "id": "cyberpunk-medium",
+          "complexity": "medium",
+          "parameters": {
+            "prompt": "a cinematic cyberpunk street with neon reflections and rainy atmosphere"
+          }
+        },
+        {
+          "id": "festival-high",
+          "complexity": "high",
+          "parameters": {
+            "prompt": "a vibrant futuristic street festival with floating lanterns, layered holograms, dramatic depth, and richly detailed costumes"
+          }
+        }
+      ]
     }
   ]
 }

@@ -220,7 +220,13 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 				totalModels++
 				globalModelSet[hw.ModelID] = true
 
-				m := types.Model{Name: hw.ModelID}
+				m := types.Model{
+					Name:          hw.ModelID,
+					Warm:          warm,
+					IdleCapacity:  capacity,
+					CapacityInUse: modelInfo.CapacityInUse,
+					RunnerVersion: runnerVersion,
+				}
 
 				// Store capacity in Warm/Cold buckets (still compatible with existing code)
 				if warm {

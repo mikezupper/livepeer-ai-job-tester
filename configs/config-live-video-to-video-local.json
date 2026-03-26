@@ -1,0 +1,62 @@
+{
+  "region": "NYC",
+  "jobType": "ai",
+  "internalWebServerPort": "7934",
+  "internalWebServerAddress": "0.0.0.0",
+  "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
+  "metricsSecret": "PUT_YOUR_SECRET_KEY",
+  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
+  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterRequestToken": "PUT_OPTIONAL_BEARER_TOKEN_HERE",
+  "logger": {
+    "level": "debug",
+    "format": "TEXT",
+    "modules": {
+      "app": "debug",
+      "server": "debug",
+      "ffmpeg": "debug"
+    }
+  },
+  "liveVideo": {
+    "mediaServerURL": "rtmp://10.0.0.135:1935",
+    "testVideoPath": "test-assets/live-test-video.mp4",
+    "testDurationSeconds": 240,
+    "statusPollTimeoutSeconds": 30,
+    "statusPollIntervalSeconds": 1,
+    "metricRetryDelayMilliseconds": 200,
+    "maxMetricAttempts": 450,
+    "maxProbeAttempts": 5,
+    "targetFPS": 12,
+    "maxInitialLatencySeconds": 10,
+    "debugArtifacts": {
+      "enabled": true,
+      "captureOnFailureOnly": true,
+      "maxFrames": 3,
+      "outputDir": "debug-artifacts/live-video"
+    },
+    "orchMapping": {
+      "0x08f76e106a2dd4f6385efc8ea6c69a2816082461": [
+        "https://ai.brzeczyszczykiewicz.work:8935"
+      ]
+    }
+  },
+  "pipelines": [
+    {
+      "name": "Live video to video manual local test",
+      "uri": "live-video-to-video",
+      "live": true,
+      "parameters": {
+        "safety_check": false
+      },
+      "promptVariants": [
+        {
+          "id": "manual-watercolor-low",
+          "complexity": "low",
+          "parameters": {
+            "prompt": "watercolor painting style"
+          }
+        }
+      ]
+    }
+  ]
+}

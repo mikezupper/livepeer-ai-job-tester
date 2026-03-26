@@ -116,12 +116,49 @@ This file configures the AI Job Tester application.
 | `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs.                                   |
 | `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream.                                                                                                                                                    |
 | `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream.                                                                                                                               |
+| `liveVideo.debugArtifacts` | Optional manual-debug artifact capture settings. These are disabled by default and should only be enabled when inspecting a run locally.                                                           |
 
 _**Note:**_ pipelines that require input assets (images or audio) the test files are located in the `tests-assets/` folder. When adding new pipelines, make sure to update the ai job submission logic in `internal/server/server.go` `SendTestJob` function.
 
 ### Live Video Pipeline Configuration
 
-Each live-enabled pipeline must also mark the configuration with `"live": true` and provide any runtime parameters required by the Gateway.
+`live-video-to-video` is the only pipeline that uses the multi-prompt layout. Its config must:
+
+- set `"live": true`
+- provide shared base params in `parameters`
+- provide one or more `promptVariants`
+- assign every prompt variant an `id`, `complexity` (`low|medium|high`), and `parameters`
+
+Example:
+
+```json
+{
+  "name": "Live video to video",
+  "uri": "live-video-to-video",
+  "live": true,
+  "parameters": {
+    "safety_check": false
+  },
+  "promptVariants": [
+    {
+      "id": "watercolor-low",
+      "complexity": "low",
+      "parameters": {
+        "prompt": "watercolor painting style"
+      }
+    },
+    {
+      "id": "cyberpunk-medium",
+      "complexity": "medium",
+      "parameters": {
+        "prompt": "a cinematic cyberpunk street with neon reflections and rainy atmosphere"
+      }
+    }
+  ]
+}
+```
+
+Non-live pipeline config does not change.
 
 ### Orchestrator Discovery for Live Jobs
 
@@ -140,14 +177,30 @@ Ensure the Mediamtx container shares the same network namespace as the Gateway s
 
 Also, the `aiJobTesterStream` stream key prefix is defined in the go code and any changes to it must be updated in this config as well!
 
+### Live Design Principles
+
+- Live prompt scenarios are config-driven and expanded per orch/model/prompt variant.
+- The live payload is encoded into the RTMP query string once, then forwarded unchanged by Mediamtx through `$MTX_QUERY`.
+- Gateway routing fields stay top-level in the RTMP query (`pipeline`, `streamId`, `orchestrator`), while inference params are encoded into a single `params=<json>` query field.
+- Prompt verification means the worker reported the expected `last_params_hash`; it does not claim semantic prompt adherence.
+- Busy/capped orchs are deferred and eventually marked `unscored`, not failed.
+- Debug artifacts are manual-debug tools only and are disabled by default.
+
 ### Live AI Video Data Flow
 
-1. The tester determines whether a job is live by inspecting the pipeline configuration (`live: true`). Live jobs push the static fixture video to the Gateway via RTMP using the parameters defined in the pipeline block.
-2. The static video file in `test-assets` is streamed to Mediamtx, which forwards it to the Gateway using `aiJobTesterStream` prefix for the stream key.
-3. The tester polls the Gateway at `/live/video-to-video/{stream}/status` until it returns `200 OK`, or fails the run if readiness is not signalled before `statusPollTimeoutSeconds` elapses.
-4. Once the stream is ready the tester launches `ffprobe` against the configured playback URL, sampling frames for the configured duration to measure FPS and end-to-end latency.
-5. After the interval elapses the tester cancels the ffmpeg push, stopping the live video session.
-6. The collected metrics are rolled up into the job tester stats payload (average FPS, latency, frame count, readiness duration, initial latency, and a normalized performance score) before being posted to the Leaderboard.
+1. The tester expands each `live-video-to-video` config into one prompt scenario per `promptVariants[]` entry.
+2. For each live scenario, the tester merges `pipeline.parameters` with the prompt variant params and computes a canonical params hash.
+3. The tester builds an RTMP ingest URL with:
+   - `pipeline=<model id>`
+   - `streamId=<prompt-aware stream id>`
+   - `orchestrator=<target service URI>`
+   - `params=<json>`
+4. Mediamtx receives that RTMP publish and forwards the original query string to the gateway via `runOnReady` and `query=$MTX_QUERY`.
+5. The gateway parses the forwarded query string, extracts the single `params` field, and starts the live worker.
+6. The tester polls `/live/video-to-video/{stream}/status`, parses the JSON body, and uses that body both for busy/capacity classification and later prompt verification.
+7. Once the stream is ready enough to probe, the tester runs `ffprobe` against the playback URL to collect FPS and latency metrics.
+8. After the run, the tester fetches terminal live status snapshots and confirms prompt acceptance by matching the expected params hash to `inference_status.last_params_hash`.
+9. Busy/capped orchs are deferred to a later pass; exhausted retries become `unscored` rather than failed.
 
 ### Live Video Metrics & Scoring
 
@@ -156,16 +209,136 @@ Live runs produce a set of metrics that are derived directly from the sampled fr
 - **Frame arrival window** – Each `ffprobe` frame provides the presentation timestamp (PTS) and the wall-clock arrival time. The tester records both, using the first/last PTS as the primary duration source and falling back to arrival timing or the configured test duration if necessary.
 - **Average FPS** – Calculated from the number of frames divided by the PTS-derived duration so the result is independent of buffering behaviour in `ffmpeg`/`ffprobe`.
 - **Average latency** – Per-frame latency is measured as `arrivalSinceIngest - pts`; the average represents the end-to-end delay once the stream is flowing.
-- **Gateway readiness** – Time spent polling `/live/video-to-video/{stream}/status` until the Gateway returns `200 OK`. This duration is emitted as `gateway_ready_seconds` and is subtracted from the latency score so legitimate warm-up time is not penalized.
+- **Gateway readiness** – Time spent polling `/live/video-to-video/{stream}/status` until the Gateway returns a usable status snapshot without a terminal gateway error. This duration is emitted as `gateway_ready_seconds` and is subtracted from the latency score so legitimate warm-up time is not penalized.
 - **Initial latency** – The time from ingest start until the first frame arrives. The latency score uses the latency beyond the measured Gateway warm-up window.
 
 The normalized score that surfaces in the stats payload combines the above measurements:
 
 - **FPS component** – Compares the measured FPS to `liveVideo.targetFPS` and clamps the ratio to `0..1`.
 - **Latency component** – Compares the latency observed after the Gateway reported readiness to `liveVideo.maxInitialLatencySeconds`, also clamped to `0..1`. If the max is omitted, latency defaults to a perfect score.
-- **Final score** – A weighted average (`0.6 * FPS + 0.4 * latency`) stored in `stats.stream_performance_score`.
+- **Final score** – A weighted average (`0.6 * FPS + 0.4 * latency`) posted in the live stats payload when the run is scored.
 
 Choose `statusPollTimeoutSeconds` to reflect how long the Gateway normally needs to prepare a pipeline. The tester fails the run if the Gateway never reports readiness within that window; otherwise the measured warm-up time is subtracted from the latency score so only post-ready latency impacts the final score. `maxInitialLatencySeconds` should capture how quickly the first frame should arrive once the stream is ready.
+
+### Busy Orchestrators and Unscored Runs
+
+For live video tests the tester uses only live-path signals:
+
+- refreshed `getNetworkCapabilities` data before each pass
+- parsed `/live/video-to-video/{stream}/status` responses during and after the run
+
+Behavior:
+
+- `capacity == 0` and `capacity_in_use > 0` is treated as busy and deferred
+- `capacity == 0` and `capacity_in_use == 0` is treated as indeterminate capacity and deferred
+- `OrchestratorCapped`, `OrchestratorBusy`, or `insufficient capacity` in live status are treated as busy
+- `no orchestrators available` is treated cautiously and only mapped to a defer outcome when corroborated by fresh live capacity data
+
+Deferred bundles are retried for a bounded number of passes. If an orch never frees up, the run is posted as `unscored` so downstream systems can see that the attempt happened without treating a loaded orch like a failed one.
+
+### Prompt Verification
+
+Prompt verification is intentionally narrow:
+
+- `confirmed` means the tester’s canonical params hash matched `inference_status.last_params_hash` from the live status API
+- `unverified` means the stream ended before the tester observed that confirmation
+
+This confirms that the worker accepted the intended prompt payload. It does **not** prove that the pixels semantically match the prompt.
+
+### Local Runs and Manual Debugging
+
+`docker-compose-live-video.yml` is still the production/cron-oriented setup. For local one-shot runs, use the companion override file so you can keep production unchanged while replacing the cron entrypoint with a direct invocation plus a post-run sleep for manual inspection:
+
+```bash
+docker compose \
+  -f docker-compose-live-video.yml \
+  -f docker-compose-live-video.local.yml \
+  up --build
+```
+
+Useful local override knobs:
+
+- `CONFIG_FILE` defaults to `/app/local-configs/config-live-video-to-video-pipelines.json`
+- `LIVE_MANUAL_ATTACH_SECONDS` defaults to `20`
+- `LOCAL_STARTUP_RETRIES` defaults to `4`
+- `LOCAL_STARTUP_RETRY_DELAY_SECONDS` defaults to `10`
+- `POST_RUN_SLEEP_SECONDS` defaults to `600`
+
+A checked-in manual-testing config is available at [`configs/config-live-video-to-video-local.json`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/configs/config-live-video-to-video-local.json). It narrows the run to one orch/service URI, uses a single low-complexity prompt, enables failure-only debug artifacts, and lengthens the stream duration for manual playback verification.
+
+Example targeting the checked-in local manual config and keeping the container alive for 15 minutes after the run:
+
+```bash
+CONFIG_FILE=/app/local-configs/config-live-video-to-video-local.json \
+LIVE_MANUAL_ATTACH_SECONDS=30 \
+LOCAL_STARTUP_RETRIES=6 \
+LOCAL_STARTUP_RETRY_DELAY_SECONDS=10 \
+POST_RUN_SLEEP_SECONDS=900 \
+docker compose \
+  -f docker-compose-live-video.yml \
+  -f docker-compose-live-video.local.yml \
+  up --build
+```
+
+The override builds the local image from this repo, bind-mounts `./configs` into the container at `/app/local-configs`, and bind-mounts `./debug-artifacts` so any manual-debug frames are written back to the host.
+It also retries the one-shot tester command locally if the Gateway is still booting, which helps with transient `connection refused` races during `docker compose up`.
+
+If you do not want to use Docker for a one-off local run, you can still execute the binary directly instead of using the cron-based container entrypoint:
+
+```bash
+go build -o ai-job-tester ./cmd/ai-job-tester.go
+./ai-job-tester -f configs/config-live-video-to-video-local.json -liveManualAttachSeconds 30
+```
+
+Expected local topology:
+
+- Mediamtx configured with the provided `configs/mediamtx/mediamtx.yml`
+- a tester gateway serving `broadcasterJobEndpoint`
+- a discovery/CLI gateway serving `broadcasterCliEndpoint`
+- the tester binary pointed at the live-video config file
+
+For manual inspection:
+
+1. Start from [`configs/config-live-video-to-video-local.json`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/configs/config-live-video-to-video-local.json).
+2. Update `liveVideo.orchMapping` so it points at the orch and service URI you want to inspect.
+3. Adjust `liveVideo.testDurationSeconds` if you want a shorter or longer manual watch window.
+4. Optionally tune debug artifacts. The checked-in local config already uses `debug-artifacts/live-video`, which resolves to `/app/debug-artifacts/live-video` inside the container because the working directory is `/app`:
+
+```json
+"liveVideo": {
+  "debugArtifacts": {
+    "enabled": true,
+    "captureOnFailureOnly": true,
+    "maxFrames": 3,
+    "outputDir": "debug-artifacts/live-video"
+  }
+}
+```
+
+5. Run the tester once with the Compose override or direct binary.
+6. Look for the logged `stream_id`, `ingest_url`, and `playback_url`. When `-liveManualAttachSeconds` is non-zero, the tester also logs a manual attach window message and waits before metric collection begins.
+7. Open the playback URL with an external player such as:
+   - `ffplay <playback_url>`
+   - VLC using the same RTMP/HLS/WebRTC path
+8. If debug artifacts are enabled, inspect the saved frames under `debug-artifacts/live-video/<stream_id>/`.
+9. When you are done inspecting, stop the local stack with:
+
+```bash
+docker compose \
+  -f docker-compose-live-video.yml \
+  -f docker-compose-live-video.local.yml \
+  down
+```
+
+Useful live-debug fields in the posted/logged payload:
+
+- `test_outcome`
+- `prompt_verification`
+- `prompt_confirmed`
+- `stream_valid`
+- `stream_id`
+- `params_hash`
+- `defer_attempts`
 
 ##### Example Configuration
 ```json
@@ -276,8 +449,24 @@ Choose `statusPollTimeoutSeconds` to reflect how long the Gateway normally needs
       "contentType": "application/json",
       "live": true,
       "parameters": {
-        "pipeline": "streamdiffusion-sdxl"
-      }
+        "safety_check": false
+      },
+      "promptVariants": [
+        {
+          "id": "watercolor-low",
+          "complexity": "low",
+          "parameters": {
+            "prompt": "watercolor painting style"
+          }
+        },
+        {
+          "id": "cyberpunk-medium",
+          "complexity": "medium",
+          "parameters": {
+            "prompt": "a cinematic cyberpunk street with neon reflections and rainy atmosphere"
+          }
+        }
+      ]
     }
   ]
 }

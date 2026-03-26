@@ -23,6 +23,7 @@ import (
 func main() {
 	// Parse command-line flags to get the configuration file path.
 	configFile := flag.String("f", "configs/config.json", "path to the config file")
+	liveManualAttachSeconds := flag.Int("liveManualAttachSeconds", 0, "local-only delay after live readiness before metrics collection, giving you time to open the playback URL manually")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -55,13 +56,23 @@ func main() {
 
 	// Initialize the Livepeer service with the HTTP client and loaded configuration.
 	livepeerService := services.NewHTTPLivepeerService(client, cfg, loggerManager.Logger("livepeer"))
-	statusClient := status.NewClient(nil, loggerManager.Logger("gateway-status"))
+	statusClient := status.NewClient(client, loggerManager.Logger("gateway-status"))
 	ffmpegClient, err := ffmpeg.NewClient(loggerManager.Logger("ffmpeg"), statusClient)
 	if err != nil {
 		appLogger.Error("failed to construct ffmpeg client", slog.Any("error", err))
 		os.Exit(1)
 	}
-	webhookServer, err := server.NewEmbeddedWebhookServer(cfg, client, livepeerService, ffmpegClient, loggerManager.Logger("server"))
+	webhookServer, err := server.NewEmbeddedWebhookServer(
+		cfg,
+		client,
+		livepeerService,
+		ffmpegClient,
+		statusClient,
+		server.RuntimeOptions{
+			LiveManualAttachDelay: time.Duration(*liveManualAttachSeconds) * time.Second,
+		},
+		loggerManager.Logger("server"),
+	)
 	if err != nil {
 		appLogger.Error("failed to construct webhook server", slog.Any("error", err))
 		os.Exit(1)
