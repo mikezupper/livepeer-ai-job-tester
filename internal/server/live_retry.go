@@ -1,3 +1,12 @@
+// Package server — live retry and busy/capped deferral logic.
+//
+// The busy/capped deferral and cooldown model in this file is intentionally
+// scoped to live-video-to-video only. Batch jobs are stateless: a capacity
+// rejection is an immediate terminal outcome per orchestrator, and the cron
+// schedule handles retry at the run level. Live jobs require active mitigation
+// because a busy/capped signal can arrive mid-stream (after Gateway and
+// MediaMTX sessions are already open), requiring teardown, fresh stream-ID
+// generation, and bounded backoff before the next attempt.
 package server
 
 import (

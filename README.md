@@ -46,7 +46,7 @@ The main entrypoint for the application. This component is responsible for contr
 
 #### Livepeer Gateway
 As the AI Job Tester iterates through the list of Orchestrators, it notifies the Livepeer Gateway about which Orchestrator to run the test scenarios against.
-To enable this behavior, the Gateway uses `orchWebhookUrl`, `aiSessionTimeout`, `aiTesterGateway` and `webhookRefreshInterval`.
+To enable this behavior, the Gateway uses the `LIVEPEER_TESTER_GATEWAY_ENABLED` flag.
 
 **_Important:_** The following pull request must be merged to run the AI Job Tester gateway
 
@@ -99,12 +99,10 @@ This file configures the AI Job Tester application.
 |----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `region`                   | The region code. _(default: NYC)_ (see [Region API Reference](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support#api-reference)) |
 | `jobType`                  | The job type _(default: ai)_. Currently supports `ai`. New Types maybe be added in the future.                                                                                                     |
-| `internalWebServerPort`    | The EmbeddedWebServer (Orch Webhook URL) will listen on this port _(default: 7934)_.                                                                                                               |
-| `internalWebServerAddress` | The EmbeddedWebServer (Orch Webhook URL) will listen on this network ip address _(default: 0.0.0.0)_.                                                                                              |
 | `metricsApiEndpoint`       | The URL to the Leaderboard API [post_stats endpoint](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support#api-reference)           |
 | `metricsSecret`            | The `SECRET` key used by the Leaderboard API Server.                                                                                                                                               |
 | `broadcasterJobEndpoint`   | The URL to the Livepeer Gateway AI Job Endpoint.                                                                                                                                                   |
-| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI Endpoint. See note regarding `Orchestrator Discovery for Live Jobs`.                                                                                           |
+| `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI port (typically port 7935). Used exclusively to call `getNetworkCapabilities`, which returns orchestrator addresses, service URIs, and pipeline/model capabilities in a single call.                                                                                           |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
 | `pipelines`                | The configuration of each model and pipeline. This includes the API input parameters used for AI Job submission.                                                                                   |
 | `liveVideo.mediaServerURL`      | Base ingest URL used when pushing the test stream (the tester appends a dynamic stream key) and by the playback probe when reading the transformed output (the tester appends the dynamic stream key followed by `-out`). |
@@ -115,7 +113,6 @@ This file configures the AI Job Tester application.
 | `liveVideo.metricRetryDelayMilliseconds` | Delay, in milliseconds, between retry attempts when collecting metrics from the stream. _(default: 200)_                                                                                           |
 | `liveVideo.maxMetricAttempts` | Maximum number of attempts to collect metrics from the stream before failing. _(default: 300)_                                                                                                     |
 | `liveVideo.maxProbeAttempts` | Maximum attempts made to probe the stream playback when scoring the stream. _(default: 5)_                                                                                                         |
-| `liveVideo.orchMapping`    | Map of orchestrator addresses to one or more live URIs. Each override is tested when a live pipeline runs, replacing the on-chain ServiceURI only for live jobs.                                   |
 | `liveVideo.targetFPS`      | Expected steady-state FPS for a healthy stream.                                                                                                                                                    |
 | `liveVideo.maxInitialLatencySeconds` | Maximum acceptable time-to-first-frame used when scoring the stream.                                                                                                                               |
 
@@ -160,9 +157,9 @@ Non-live pipeline config does not change.
 
 ### Orchestrator Discovery for Live Jobs
 
-The Gateway cannot rely on the on-chain Service Registry to discover live AI capabilities and all Orchestrator URIs. As such, there is a separate Docker Compose project (`docker-compose-live-video.yml`) that runs two Gateway, one for running test jobs and another for retrieving the capabilities of a pre-configured list of live video enable Orchestrators. The second Gateway (registry) ensures the first Gateway (tester) can be dynamic set to a specific Orchestrator URI without interfering with service discovery. This is a short term fix until the service registry is improved.
+Orchestrator discovery uses a single `getNetworkCapabilities` call against the Gateway CLI port (`broadcasterCliEndpoint`, default port 7935). This endpoint returns each orchestrator's Ethereum address, service URI (`orch_uri`), and full pipeline/model capability set in one response. No separate orchestrator registry call or `orchMapping` override is needed.
 
-To leverage this, you must configure this second Gateway with the exact Orchestrator service URIs that should receive live video tests in the `orchAddr` flag. This is used in combination with `liveVideo.orchMapping` to find the orchestrator and override the published ServiceURI with the full list of URIs that should be exercised for live video. Lastly, this second gateway should be configured as the `broadcasterCliEndpoint` in your config.json as well.
+Orchestrators with an empty `orch_uri` in the response are skipped automatically. The tester retries `getNetworkCapabilities` until at least one orchestrator is returned, to handle the Gateway's initial discovery warm-up window.
 
 ### Mediamtx Integration
 
@@ -171,7 +168,7 @@ To leverage this, you must configure this second Gateway with the exact Orchestr
 - `~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+$` – Matches ai-job-tester ingest stream IDs and uses `runOnReady` to invoke the Gateway CLI as soon as the tester pushes the input RTMP stream. Update this line to point to the URI of the tester Gateway.
 - `~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+-out$` – Records only the plain playback output stream under `recordings/live-video/output/<stream_id>-out/`, allowing you to inspect the final video produced by the orchestrator without also recording request-scoped internal output paths.
 
-Start MediaMTX in the same `docker compose` project as the Gateway so the default Compose network provides container-to-container name resolution for the `runOnReady` hook. There is no custom external Docker network to create for the checked-in compose files. The checked-in [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) bind-mounts [`./recordings`](recordings) to `/app/recordings` inside the container so recordings are visible on the host.
+MediaMTX is included in the `live` profile in `docker-compose.yml`, so it always starts in the same Compose project as the Gateway. The default Compose project network provides container-to-container name resolution for the `runOnReady` hook automatically — no custom Docker network is needed. The `mediamtx` service bind-mounts [`./recordings`](recordings) to `/app/recordings` inside the container so recordings are visible on the host.
 
 Also, the `aiJobTesterStream` stream key prefix is defined in the go code and any changes to it must be updated in this config as well!
 
@@ -197,10 +194,10 @@ Concrete example:
 rtmp://live-video-to-video-mediamtx:1935/aiJobTesterStream-low-watercolor-1a2b3c4d-1711570000000000000?pipeline=streamdiffusion-model&streamId=aiJobTesterStream-low-watercolor-1a2b3c4d-1711570000000000000&orchestrator=https%3A%2F%2Forch.example%3A8935&params=%7B%22prompt%22%3A%22watercolor%20painting%20style%22%7D
 ```
 
-For the checked-in local manual-test config in `configs/config-live-video-to-video-local.json`, the URL fields map like this:
+The URL fields map like this:
 
 - `liveVideo.mediaServerURL` supplies `rtmp://live-video-to-video-mediamtx:1935`
-- `liveVideo.orchMapping` supplies the `orchestrator=` service URI
+- `orchestrator=` is the service URI returned by `getNetworkCapabilities` (`orch_uri` field) — no manual override needed
 - `pipelines[].promptVariants[].parameters` plus `pipelines[].parameters` are merged into the JSON carried by `params=`
 - the `pipeline=` query value comes from live capability discovery and is the orch-advertised selector, not a static config field
 
@@ -302,85 +299,56 @@ This confirms that the worker accepted the intended prompt payload. It does **no
 
 ### Local Runs and Manual Debugging
 
-`docker-compose-live-video.yml` is still the production/cron-oriented setup. For local one-shot runs, use the companion override file so you can keep production unchanged while replacing the cron entrypoint with a direct invocation plus a post-run sleep for manual inspection:
+To run the stack once immediately instead of waiting for the cron schedule, set `RUN_IMMEDIATE=true`. The tester will run once and exit cleanly (exit code 0). Because `restart: unless-stopped` does not restart containers that exit cleanly, the container stops after the single run.
 
 ```bash
-docker compose \
-  -f docker-compose-live-video.yml \
-  -f docker-compose-live-video.local.yml \
-  up --build
+RUN_IMMEDIATE=true docker compose --profile live up
 ```
 
-Useful local override knobs:
+This is the same `live` profile — no separate local profile is needed. Build the image first with `docker build -t ai-job-tester:latest .` if you haven't already.
 
-- `CONFIG_FILE` defaults to `/app/local-configs/config-live-video-to-video-pipelines.json`
-- `LIVE_MANUAL_ATTACH_SECONDS` defaults to `20`
-- `LOCAL_STARTUP_RETRIES` defaults to `4`
-- `LOCAL_STARTUP_RETRY_DELAY_SECONDS` defaults to `10`
-- `POST_RUN_SLEEP_SECONDS` defaults to `600`
-- live prompt startup retry attempts inside the tester are currently a code-level default in [`internal/server/live_retry.go`](internal/server/live_retry.go), not a JSON config field. The current default is `2` retries per prompt after the initial attempt.
+Config files for the `live` profile are bind-mounted read-only from `./configs/ai-job-tester/` into the container at `/app/configs`. Edit those files directly and restart the stack to pick up changes.
 
-A checked-in manual-testing config is available at [`configs/config-live-video-to-video-local.json`](configs/config-live-video-to-video-local.json). It narrows the run to one orch/service URI and lengthens the stream duration for manual playback verification.
-It also sets `disableStatsPosting: true`, so local runs log the final stats payload instead of trying to POST to the leaderboard API.
-
-Example targeting the checked-in local manual config and keeping the container alive for 15 minutes after the run:
+To run a one-off test without Docker, build and invoke the binary directly:
 
 ```bash
-CONFIG_FILE=/app/local-configs/config-live-video-to-video-local.json \
-LIVE_MANUAL_ATTACH_SECONDS=30 \
-LOCAL_STARTUP_RETRIES=6 \
-LOCAL_STARTUP_RETRY_DELAY_SECONDS=10 \
-POST_RUN_SLEEP_SECONDS=900 \
-docker compose \
-  -f docker-compose-live-video.yml \
-  -f docker-compose-live-video.local.yml \
-  up --build
+go build -o jobtester ./cmd/ai-job-tester.go
+./jobtester -f configs/ai-job-tester/config-live-video-to-video-pipelines.json
 ```
 
-The override builds the local image from this repo and bind-mounts `./configs` into the container at `/app/local-configs`.
-It also retries the one-shot tester command locally if the Gateway is still booting, which helps with transient `connection refused` races during `docker compose up`.
+Local path and volume requirements:
 
-Local path and volume requirements for these compose files:
+- `./configs/ai-job-tester/` — config files bind-mounted read-only into the tester container at `/app/configs`.
+- `./configs/gateway/` — Gateway credentials bind-mounted into the Gateway container at `/root/.lpData`. Populate with your eth keystore and `eth-secret.txt` before starting. Gitignored.
+- `./recordings` — host bind-mount target for MediaMTX recording output. Keep this folder present so the bind mount has a host path to write to.
+- No custom Docker network is needed. All services in the same profile share Docker Compose's default project network.
 
-- `./configs` is already part of this repo and is bind-mounted read-only into the local override container at `/app/local-configs`. You do not need to create a separate host directory for it.
-- `./recordings` is the host folder used by MediaMTX for saved playback output. Keep this folder present in the repo so the bind mount in [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) has a host path to write to.
-- `ai-job-tester` is an external Docker volume used by the cron-oriented compose files to provide `/app/configs` inside the tester container.
-- `tester-gateway-lpData` is an external Docker volume used by the gateway container for `/root/.lpData`.
-- No custom Docker network needs to be created manually. When you launch the checked-in compose files together, Docker Compose uses its default project network.
+#### Enabling MediaMTX Recording
 
-If you do not want to use Docker for a one-off local run, you can still execute the binary directly instead of using the cron-based container entrypoint:
+Recording is disabled by default. To capture the transformed output stream to disk during a local run, edit `configs/mediamtx/mediamtx.yml` and flip `record: no` to `record: yes` on the `-out` path:
 
-```bash
-go build -o ai-job-tester ./cmd/ai-job-tester.go
-./ai-job-tester -f configs/config-live-video-to-video-local.json -liveManualAttachSeconds 30
+```yaml
+"~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+-out$":
+    record: yes
+    recordPath: /app/recordings/live-video/output/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: mpegts
 ```
 
-Expected local topology:
+Because `mediamtx.yml` is bind-mounted (not baked into the image), you can toggle this without rebuilding. Restart the stack and recordings will appear on the host at `./recordings/live-video/output/<stream_id>-out/<timestamp>.ts`.
 
-- Mediamtx configured with the provided `configs/mediamtx/mediamtx.yml`
-- a tester gateway serving `broadcasterJobEndpoint`
-- a discovery/CLI gateway serving `broadcasterCliEndpoint`
-- the tester binary pointed at the live-video config file
+For manual inspection using the Docker stack:
 
-For manual inspection:
-
-1. Start from [`configs/config-live-video-to-video-local.json`](configs/config-live-video-to-video-local.json).
-2. Update `liveVideo.orchMapping` so it points at the orch and service URI you want to inspect.
-3. Adjust `liveVideo.testDurationSeconds` if you want a shorter or longer manual watch window.
-4. Ensure MediaMTX is started with [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) as part of the same `docker compose` project as the gateway/tester containers. No custom Docker network is required. That compose file bind-mounts [`./recordings`](recordings) to `/app/recordings` inside the MediaMTX container, and [`configs/mediamtx/mediamtx.yml`](configs/mediamtx/mediamtx.yml) records plain playback `-out` streams under `recordings/live-video/output/<stream_id>-out/`.
-5. Run the tester once with the Compose override or direct binary.
-6. Use the logged `stream_id` or `playback_url` to find the recording. The output stream will be written under a path like `recordings/live-video/output/<stream_id>-out/<timestamp>.ts`. When `-liveManualAttachSeconds` is non-zero, the tester also logs a manual attach window message and waits before metric collection begins.
+1. Edit `configs/ai-job-tester/config-live-video-to-video-pipelines.json` — adjust `liveVideo.testDurationSeconds` for a shorter or longer watch window, and set `disableStatsPosting: true` if you want stats logged locally instead of posted to the leaderboard API.
+2. Start the stack with `RUN_IMMEDIATE=true docker compose --profile live up`. This starts MediaMTX, the Gateway, and the tester in one command.
+3. The tester runs once and exits. Use the logged `stream_id` or `playback_url` to find the recording. If recording is enabled in `configs/mediamtx/mediamtx.yml`, output streams appear under `recordings/live-video/output/<stream_id>-out/<timestamp>.ts` on the host.
    If no recording directory appears for a prompt, the usual cause is that the live output stream never came online for that prompt, not that MediaMTX failed after recording had already started.
-7. Open the playback URL with an external player such as:
+4. Open the playback URL with an external player such as:
    - `ffplay <playback_url>`
    - VLC using the same RTMP/HLS/WebRTC path
-8. When you are done inspecting, stop the local stack with:
+5. When you are done, stop the stack with:
 
 ```bash
-docker compose \
-  -f docker-compose-live-video.yml \
-  -f docker-compose-live-video.local.yml \
-  down
+docker compose --profile live down
 ```
 
 Useful live-debug fields in the posted/logged payload:
@@ -398,8 +366,6 @@ Useful live-debug fields in the posted/logged payload:
 {
   "region": "NYC",
   "jobType" : "ai",
-  "internalWebServerPort": "7934",
-  "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "https://localhost:8080/api/post_stats",
   "metricsSecret": "my-secret-key",
   "broadcasterJobEndpoint": "http://localhost:8935",
@@ -527,104 +493,65 @@ The use of docker is encouraged but not required.
 
 ### Build the Image
 
-`docker build ai-job-tester:latest .`
+Build the image once before running any `docker compose` profile. The image name must match the `image:` field in `docker-compose.yml` (`ai-job-tester:latest`).
+
+```bash
+docker build -t ai-job-tester:latest .
+```
+
+Rebuild whenever the source code or `Dockerfile` changes.
 
 ## Run the Application
 
-To run the AI Job Tester application, you will need `docker compose`.
+The entire stack is managed through a single [`docker-compose.yml`](docker-compose.yml) with two profiles. Select the profile that matches your intent:
 
-The `docker-compose.yml` will allow you to run the applications needed: AI Job Tester and Livepeer Gateway.
-You must create the following Docker volumes before starting the cron-oriented compose files, and configure them appropriately:
+| Profile | Purpose | Schedule |
+|---------|---------|----------|
+| `batch` | AI batch pipeline testing | Cron every 2 min |
+| `live`  | Live video-to-video testing | Cron every 2 min |
 
-_ai-job-tester_ - stores the `configs/config.json` file needed to run `ai-job-tester`. You must configure the file and place in the volume's directory.
+```bash
+docker compose --profile batch up -d              # batch (cron, background)
+docker compose --profile live  up -d              # live video (cron, background)
+RUN_IMMEDIATE=true docker compose --profile live up   # live video, run once immediately
+```
 
-`docker volume create ai-job-tester`
+Profiles are mutually exclusive. Do not combine them in the same invocation.
 
-_tester-gateway-lpData_ - The Livepeer Gateway's `.lpData` folder. You must configure the required livepeer files and place in the volume's directory.
+Both profiles use the pre-built `ai-job-tester:latest` image — run `docker build -t ai-job-tester:latest .` from this repo before starting any profile. Set `RUN_IMMEDIATE=true` to run once and exit instead of looping on cron.
 
-`docker volume create tester-gateway-lpData`
+### Prerequisites: Local Folders
 
-Local folders used by the checked-in compose files:
+No external Docker volumes are needed. Config files are provided via bind mounts from this repo.
 
-- [`./configs`](configs) is a repo directory that already exists and contains checked-in config files.
-- [`./recordings`](recordings) is the host bind-mount target for MediaMTX output when you use [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml).
+**`configs/gateway/`** — place the Gateway credential files here before starting any profile:
 
-Docker networking:
+```
+configs/gateway/
+  eth-secret.txt          # wallet password
+  keystore/UTC--...       # eth keystore file
+```
 
-- No custom Docker network needs to be created manually for the checked-in compose files.
-- If you need MediaMTX to resolve the gateway container name, start the relevant compose files in the same `docker compose` project so they share Compose's default project network.
+This folder is listed in `.gitignore` so credentials are never committed.
+
+**`configs/ai-job-tester/`** — runtime config JSON files for the tester container. These are already checked in and bind-mounted read-only into the tester at `/app/configs`.
+
+**`./recordings/`** — host bind-mount target for MediaMTX recording output. Keep this folder present so the bind mount has a host path to write to.
+
+No custom Docker network is needed. All services in the same profile share Docker Compose's default project network.
 
 ### Job Scheduling
 
-The `ai-job-tester` docker image allows job scheduling using Linux `crontab`. `The docker-compose.yml` file has an environment variable to allow custom schedules.
+The production profiles use Linux `crontab` inside the container. The schedule is controlled by the `CRONTAB_SCHEDULE` environment variable set in `docker-compose.yml`:
 
+- `batch` profile: `0/2 * * * *` (every 2 minutes)
+- `live` profile: `*/2 * * * *` (every 2 minutes)
 
-Example runs every hour on the 0 minute: 
+**_Note:_** The following Gateway flags are required for the tester Gateway to operate in job-test mode:
 
-`- CRONTAB_SCHEDULE=0 */1 * * *`
-
-### docker-compose.yml
-```
-services:
-  ai-job-tester:
-    image: ai-job-tester:latest
-    container_name: "ai-job-tester"
-    volumes:
-      - ai-job-tester:/app/configs
-    environment:
-      - TZ=UTC
-      - CRONTAB_SCHEDULE=0 */1 * * *
-      - CONFIG_FILE=/app/configs/config.json
-    depends_on:
-      - tester-gateway
-
-  tester-gateway:
-    image: tztcloud/go-livepeer:v0.7.9-ai.3-v0.0.11
-    restart: unless-stopped
-    hostname: tester-gateway
-    container_name: tester-gateway
-    volumes:
-      - tester-gateway-lpData:/root/.lpData
-    environment:
-      - LIVEPEER_OS_HTTP_TIMEOUT=8s
-    command: '-ethUrl=YOUR_RPC_URL
-              -ethPassword=/root/.lpData/eth-secret.txt
-              -ethKeystorePath=/root/.lpData
-              -network=arbitrum-one-mainnet
-              -serviceAddr=ai-tester-gateway:8935
-              -cliAddr=ai-tester-gateway:7935
-              -gateway=true
-              -monitor=true
-              -maxPricePerUnit=125000000
-              -maxTotalEV=100000000000000
-              -v=5
-              -pixelsPerUnit=1
-              -blockPollingInterval=20
-              -httpIngest=true
-              -httpAddr=0.0.0.0:8935
-              -orchMinLivepeerVersion=v0.7.9-ai.3
-              -aiTesterGateway=true
-              -discoveryTimeout=100ms
-              -webhookRefreshInterval=0
-              -aiSessionTimeout=0
-              -orchWebhookUrl=http://ai-job-tester:7934/orchestrators
-              '
-
-volumes:
-  tester-gateway-lpData:
-    external: true
-
-  ai-job-tester:
-    external: true
-```
-
-**_Note:_** Take note of the configuration flags that are needed to run a Livepeer Gateway in "Job Test Mode"
 Environment Variables:
 `LIVEPEER_OS_HTTP_TIMEOUT=8s`
+`LIVEPEER_TESTER_GATEWAY_ENABLED=true`
 
-Livepeer Startup Flags
-`-aiTesterGateway=true`
+Livepeer Startup Flags:
 `-discoveryTimeout=1000ms`
-`-webhookRefreshInterval=0`
-`-aiSessionTimeout=0`
-`-orchWebhookUrl=http://ai-job-tester:7934/orchestrators`

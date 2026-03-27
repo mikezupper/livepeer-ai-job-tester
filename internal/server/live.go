@@ -158,7 +158,6 @@ func (ss *EmbeddedWebhookServer) runLiveBundlePass(ctx context.Context, bundle l
 			return liveBundle{}, nil, fmt.Errorf("build live run spec: %w", err)
 		}
 
-		ss.SetOrchToTest(bundle.ServiceURI)
 		ss.logger.InfoContext(ctx, "running live prompt test",
 			slog.String("orchestrator", bundle.OrchestratorAddress),
 			slog.String("service_uri", bundle.ServiceURI),

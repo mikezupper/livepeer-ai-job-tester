@@ -12,19 +12,17 @@ import (
 // It includes settings for the region, job type, internal server,
 // metrics API, broadcaster endpoints, and a list of pipelines.
 type Config struct {
-	Region                   string           `json:"region"`
-	JobType                  string           `json:"jobType"`
-	InternalWebServerPort    string           `json:"internalWebServerPort"`
-	InternalWebServerAddress string           `json:"internalWebServerAddress"`
-	MetricsApiEndpoint       string           `json:"metricsApiEndpoint"`
-	MetricsSecret            string           `json:"metricsSecret"`
-	DisableStatsPosting      bool             `json:"disableStatsPosting,omitempty"`
-	BroadcasterJobEndpoint   string           `json:"broadcasterJobEndpoint"`
-	BroadcasterCliEndpoint   string           `json:"broadcasterCliEndpoint"`
-	BroadcasterRequestToken  string           `json:"broadcasterRequestToken"`
-	Pipelines                []Pipeline       `json:"pipelines"`
-	LiveVideo                *LiveVideoConfig `json:"liveVideo,omitempty"`
-	Logger                   *LoggerConfig    `json:"logger,omitempty"`
+	Region                  string           `json:"region"`
+	JobType                 string           `json:"jobType"`
+	MetricsApiEndpoint      string           `json:"metricsApiEndpoint"`
+	MetricsSecret           string           `json:"metricsSecret"`
+	DisableStatsPosting     bool             `json:"disableStatsPosting,omitempty"`
+	BroadcasterJobEndpoint  string           `json:"broadcasterJobEndpoint"`
+	BroadcasterCliEndpoint  string           `json:"broadcasterCliEndpoint"`
+	BroadcasterRequestToken string           `json:"broadcasterRequestToken"`
+	Pipelines               []Pipeline       `json:"pipelines"`
+	LiveVideo               *LiveVideoConfig `json:"liveVideo,omitempty"`
+	Logger                  *LoggerConfig    `json:"logger,omitempty"`
 }
 
 // Pipeline represents a data processing pipeline configuration.
@@ -42,17 +40,16 @@ type Pipeline struct {
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
 type LiveVideoConfig struct {
-	MediaServerURL               string              `json:"mediaServerURL"`
-	TestVideoPath                string              `json:"testVideoPath"`
-	TestDurationSeconds          int                 `json:"testDurationSeconds"`
-	StatusPollTimeoutSeconds     int                 `json:"statusPollTimeoutSeconds"`
-	StatusPollIntervalSeconds    int                 `json:"statusPollIntervalSeconds,omitempty"`
-	MetricRetryDelayMilliseconds int                 `json:"metricRetryDelayMilliseconds,omitempty"`
-	MaxMetricAttempts            int                 `json:"maxMetricAttempts,omitempty"`
-	MaxProbeAttempts             int                 `json:"maxProbeAttempts,omitempty"`
-	OrchMapping                  map[string][]string `json:"orchMapping,omitempty"`
-	TargetFPS                    float64             `json:"targetFPS,omitempty"`
-	MaxInitialLatencySeconds     float64             `json:"maxInitialLatencySeconds,omitempty"`
+	MediaServerURL               string  `json:"mediaServerURL"`
+	TestVideoPath                string  `json:"testVideoPath"`
+	TestDurationSeconds          int     `json:"testDurationSeconds"`
+	StatusPollTimeoutSeconds     int     `json:"statusPollTimeoutSeconds"`
+	StatusPollIntervalSeconds    int     `json:"statusPollIntervalSeconds,omitempty"`
+	MetricRetryDelayMilliseconds int     `json:"metricRetryDelayMilliseconds,omitempty"`
+	MaxMetricAttempts            int     `json:"maxMetricAttempts,omitempty"`
+	MaxProbeAttempts             int     `json:"maxProbeAttempts,omitempty"`
+	TargetFPS                    float64 `json:"targetFPS,omitempty"`
+	MaxInitialLatencySeconds     float64 `json:"maxInitialLatencySeconds,omitempty"`
 }
 
 // PromptVariant defines a single live video prompt scenario to run against an orchestrator.

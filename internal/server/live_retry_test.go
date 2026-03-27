@@ -27,10 +27,6 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func (s *sequencingLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.Orchestrator, error) {
-	return nil, nil
-}
-
 func (s *sequencingLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipelines, error) {
 	if len(s.pipelineResponses) == 0 {
 		return &types.Pipelines{}, nil

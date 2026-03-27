@@ -13,7 +13,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"livepeer-job-tester/internal/config"
@@ -28,22 +27,12 @@ const (
 	startupGatewayFetchDelay    = 2 * time.Second
 )
 
-// ServerService defines the interface for starting the server and sending test jobs.
-// It abstracts the operations needed to interact with orchestrators and pipelines.
-type ServerService interface {
-	StartServer(ctx context.Context, addr string) error
-	SendTestJob(ctx context.Context, orchEthAddr, orchServiceUri, pipeline, model string, modelIsWarm bool) error
-}
-
 // EmbeddedWebhookServer represents the server responsible for managing job testing and orchestrator interactions.
-// It contains configuration, a client, orchestrators, and a metrics service for tracking job test results.
+// It contains configuration, a client, and a metrics service for tracking job test results.
 type EmbeddedWebhookServer struct {
-	lock                  sync.RWMutex               // Mutex to manage concurrent access to orchestrator data.
 	config                *config.Config             // Configuration for the server, including API endpoints and credentials.
 	livepeerService       services.LivepeerService   // Service to interact with Livepeer API for fetching orchestrators and pipelines.
 	client                *http.Client               // HTTP client for making requests.
-	orchestrators         []types.Orchestrator       // List of orchestrators fetched from the Livepeer API.
-	orchToTest            string                     // Currently selected orchestrator for testing.
 	jobTesterMetrics      *services.JobTesterMetrics // Metrics service for tracking job tester results.
 	ffmpegClient          ffmpeg.Client
 	statusClient          *status.Client
@@ -58,7 +47,6 @@ type RuntimeOptions struct {
 }
 
 // NewEmbeddedWebhookServer creates a new instance of EmbeddedWebhookServer with the provided configuration, HTTP client, and Livepeer service.
-// It initializes the server with empty orchestrator data and a new JobTesterMetrics instance.
 func NewEmbeddedWebhookServer(
 	config *config.Config,
 	client *http.Client,
@@ -91,36 +79,6 @@ func NewEmbeddedWebhookServer(
 	}, nil
 }
 
-// StartServer starts the HTTP server and listens on the specified address.
-// It sets up the web server handlers and manages the shutdown process.
-func (ss *EmbeddedWebhookServer) StartServer(ctx context.Context, addr string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	mux := ss.webServerHandlers()
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		ss.logger.InfoContext(ctx, "shutting down web server")
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			ss.logger.ErrorContext(ctx, "failed to shutdown web server", slog.Any("error", err))
-		}
-	}()
-
-	ss.logger.InfoContext(ctx, "web server listening", slog.String("addr", addr))
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("listen and serve error: %w", err)
-	}
-	return nil
-}
-
 // RunTestJobs fetches orchestrators and pipelines from the Livepeer API and sends test jobs to each orchestrator.
 // It increments job metrics and generates a JSON report of the job tester results.
 func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
@@ -131,38 +89,23 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 	// The tester often starts alongside the Gateway in local docker-compose runs.
 	// A small bounded retry window avoids failing immediately when the Gateway
 	// container exists but has not bound its CLI endpoints yet.
-	orchestrators, err := ss.fetchOrchestratorsWithRetry(ctx)
-	if err != nil {
-		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
-		return fmt.Errorf("failed to fetch orchestrators: %w", err)
-	}
-	ss.logger.InfoContext(ctx, "orchestrators fetched", slog.Int("count", len(orchestrators)))
-	//make sure to update the orchestrators in a thread-safe manner
-	//as it could be read by the web server handlers from the gateway
-	ss.lock.Lock()
-	ss.orchestrators = orchestrators
-	ss.lock.Unlock()
-
-	// Fetch pipelines
 	pipelines, err := ss.fetchPipelinesWithRetry(ctx)
 	if err != nil {
 		ss.jobTesterMetrics.IncrementTotalJobsTesterError()
 		return fmt.Errorf("failed to fetch pipelines: %w", err)
 	}
 
-	orchestratorMap := make(map[string]types.OrchestratorCapability)
-	for _, orchestrator := range pipelines.Orchestrators {
-		orchestratorMap[orchestrator.Address] = orchestrator
+	ss.logger.InfoContext(ctx, "orchestrators fetched", slog.Int("count", len(pipelines.Orchestrators)))
+	for _, cap := range pipelines.Orchestrators {
 		ss.logger.DebugContext(ctx, "capabilities loaded",
-			slog.String("orchestrator", orchestrator.Address),
-			slog.Int("pipelines", len(orchestrator.Pipelines)))
+			slog.String("orchestrator", cap.Address),
+			slog.Int("pipelines", len(cap.Pipelines)))
 	}
 
-	standardJobs, liveBundles := ss.buildExecutionPlan(ctx, orchestrators, orchestratorMap)
+	standardJobs, liveBundles := ss.buildExecutionPlan(ctx, pipelines.Orchestrators)
 	ss.logger.InfoContext(ctx, "expected jobs computed", slog.Int("total", ss.jobTesterMetrics.ExpectedTotalJobs))
 
 	for _, job := range standardJobs {
-		ss.SetOrchToTest(job.ServiceURI)
 		ss.logger.InfoContext(ctx, "sending test job",
 			slog.String("region", ss.config.Region),
 			slog.String("orchestrator", job.OrchestratorAddress),
@@ -197,49 +140,25 @@ func (ss *EmbeddedWebhookServer) RunTestJobs(ctx context.Context) error {
 	return nil
 }
 
-func (ss *EmbeddedWebhookServer) fetchOrchestratorsWithRetry(ctx context.Context) ([]types.Orchestrator, error) {
-	var lastErr error
-	for attempt := 1; attempt <= startupGatewayFetchAttempts; attempt++ {
-		orchestrators, err := ss.livepeerService.FetchOrchestrators(ctx)
-		if err == nil {
-			if attempt > 1 {
-				ss.logger.InfoContext(ctx, "gateway orchestrator endpoint became ready",
-					slog.Int("attempt", attempt))
-			}
-			return orchestrators, nil
-		}
-
-		lastErr = err
-		if attempt == startupGatewayFetchAttempts {
-			break
-		}
-
-		ss.logger.WarnContext(ctx, "gateway orchestrator endpoint not ready yet",
-			slog.Int("attempt", attempt),
-			slog.Int("max_attempts", startupGatewayFetchAttempts),
-			slog.Duration("retry_delay", startupGatewayFetchDelay),
-			slog.Any("error", err))
-
-		if err := sleepWithContext(ctx, startupGatewayFetchDelay); err != nil {
-			return nil, err
-		}
-	}
-	return nil, lastErr
-}
-
 func (ss *EmbeddedWebhookServer) fetchPipelinesWithRetry(ctx context.Context) (*types.Pipelines, error) {
 	var lastErr error
 	for attempt := 1; attempt <= startupGatewayFetchAttempts; attempt++ {
 		pipelines, err := ss.livepeerService.FetchPipelines(ctx)
-		if err == nil {
+		if err == nil && len(pipelines.Orchestrators) > 0 {
 			if attempt > 1 {
 				ss.logger.InfoContext(ctx, "gateway capability endpoint became ready",
-					slog.Int("attempt", attempt))
+					slog.Int("attempt", attempt),
+					slog.Int("orchestrators", len(pipelines.Orchestrators)))
 			}
 			return pipelines, nil
 		}
 
-		lastErr = err
+		if err == nil {
+			lastErr = fmt.Errorf("gateway returned 0 orchestrators")
+		} else {
+			lastErr = err
+		}
+
 		if attempt == startupGatewayFetchAttempts {
 			break
 		}
@@ -248,7 +167,7 @@ func (ss *EmbeddedWebhookServer) fetchPipelinesWithRetry(ctx context.Context) (*
 			slog.Int("attempt", attempt),
 			slog.Int("max_attempts", startupGatewayFetchAttempts),
 			slog.Duration("retry_delay", startupGatewayFetchDelay),
-			slog.Any("error", err))
+			slog.Any("error", lastErr))
 
 		if err := sleepWithContext(ctx, startupGatewayFetchDelay); err != nil {
 			return nil, err
@@ -272,23 +191,17 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 // buildExecutionPlan expands the raw capability snapshot into non-live jobs and
 // live-video bundles. The live bundles keep all prompt variants for an orch/model
 // together so capacity-based deferrals can move the whole orch bundle to a later pass.
-func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchestrators []types.Orchestrator, orchestratorMap map[string]types.OrchestratorCapability) ([]standardJob, []liveBundle) {
+func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, caps []types.OrchestratorCapability) ([]standardJob, []liveBundle) {
 	var standardJobs []standardJob
 	var liveBundles []liveBundle
 
-	for _, orch := range orchestrators {
-		capability, exists := orchestratorMap[orch.Address]
-		if !exists {
-			ss.logger.WarnContext(ctx, "orchestrator missing capability definition", slog.String("orchestrator", orch.Address))
-			continue
-		}
-
-		for _, pipeline := range capability.Pipelines {
+	for _, cap := range caps {
+		for _, pipeline := range cap.Pipelines {
 			pipelineName := pipeline.Type
-			urisToTest, overrideApplied := ss.resolveServiceURIs(orch, pipelineName)
+			urisToTest, overrideApplied := ss.resolveServiceURIs(cap, pipelineName)
 			if len(urisToTest) == 0 {
 				ss.logger.WarnContext(ctx, "no service URIs resolved for orchestrator pipeline",
-					slog.String("orchestrator", orch.Address),
+					slog.String("orchestrator", cap.Address),
 					slog.String("pipeline", pipelineName))
 				continue
 			}
@@ -303,14 +216,14 @@ func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchest
 				for _, uri := range urisToTest {
 					if overrideApplied {
 						ss.logger.DebugContext(ctx, "overriding service URI for orchestrator",
-							slog.String("orchestrator", orch.Address),
+							slog.String("orchestrator", cap.Address),
 							slog.String("service_uri", uri),
 							slog.String("pipeline", pipelineName))
 					}
 
 					if cfgPipeline.Live && pipelineName == "live-video-to-video" {
 						bundle := liveBundle{
-							OrchestratorAddress: orch.Address,
+							OrchestratorAddress: cap.Address,
 							ServiceURI:          uri,
 							PipelineName:        pipelineName,
 							CapabilityModel:     model,
@@ -323,7 +236,7 @@ func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchest
 								ModelIsWarm: model.Status.Warm > 0,
 							})
 							ss.logger.DebugContext(ctx, "queued live prompt job",
-								slog.String("orchestrator", orch.Address),
+								slog.String("orchestrator", cap.Address),
 								slog.String("service_uri", uri),
 								slog.String("pipeline", pipelineName),
 								slog.String("model", model.Name),
@@ -336,13 +249,13 @@ func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchest
 
 					ss.jobTesterMetrics.IncrementExpectedTotalJobs()
 					standardJobs = append(standardJobs, standardJob{
-						OrchestratorAddress: orch.Address,
+						OrchestratorAddress: cap.Address,
 						ServiceURI:          uri,
 						PipelineName:        pipelineName,
 						Model:               model,
 					})
 					ss.logger.DebugContext(ctx, "queued test job",
-						slog.String("orchestrator", orch.Address),
+						slog.String("orchestrator", cap.Address),
 						slog.String("service_uri", uri),
 						slog.String("pipeline", pipelineName),
 						slog.String("model", model.Name))
@@ -354,54 +267,14 @@ func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchest
 	return standardJobs, liveBundles
 }
 
-func (ss *EmbeddedWebhookServer) lookupLiveVideoOverrides(orchestratorAddr string) []string {
-	liveCfg := ss.config.LiveVideo
-	if liveCfg == nil || liveCfg.OrchMapping == nil {
-		return nil
-	}
-
-	for mappedEthAddr, mappedURIs := range liveCfg.OrchMapping {
-		if !strings.EqualFold(strings.ToLower(mappedEthAddr), strings.ToLower(orchestratorAddr)) {
-			continue
-		}
-
-		var overrides []string
-		for _, uri := range mappedURIs {
-			trimmed := strings.TrimSpace(uri)
-			if trimmed == "" {
-				continue
-			}
-			overrides = append(overrides, strings.ToLower(trimmed))
-		}
-
-		if len(overrides) > 0 {
-			return overrides
-		}
-		break
-	}
-
-	return nil
-}
-
-func (ss *EmbeddedWebhookServer) resolveServiceURIs(orchestrator types.Orchestrator, pipelineName string) ([]string, bool) {
-	if cfg, ok := ss.findParametersByPipelineName(pipelineName); ok && cfg.Live {
-		overrides := ss.lookupLiveVideoOverrides(orchestrator.Address)
-		if len(overrides) > 0 {
-			ss.logger.Debug("resolved live service URIs from config override",
-				slog.String("orchestrator", orchestrator.Address),
-				slog.String("pipeline", pipelineName),
-				slog.Any("service_uris", overrides))
-			return overrides, true
-		}
-	}
-
-	uri := strings.TrimSpace(orchestrator.ServiceURI)
+func (ss *EmbeddedWebhookServer) resolveServiceURIs(cap types.OrchestratorCapability, pipelineName string) ([]string, bool) {
+	uri := strings.TrimSpace(cap.ServiceURI)
 	if uri == "" {
 		return nil, false
 	}
 
-	ss.logger.Debug("resolved service URI from registered orchestrator",
-		slog.String("orchestrator", orchestrator.Address),
+	ss.logger.Debug("resolved service URI from network capabilities",
+		slog.String("orchestrator", cap.Address),
 		slog.String("pipeline", pipelineName),
 		slog.String("service_uri", uri))
 	return []string{uri}, false
@@ -550,51 +423,6 @@ func applyMetricsToStats(stats *types.Stats, metrics *ffmpeg.Metrics, cfg *confi
 	stats.RoundTripTime = metricsScore
 }
 
-// webServerHandlers sets up the HTTP handlers for the server, including the /orchestrators endpoint.
-func (ss *EmbeddedWebhookServer) webServerHandlers() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/orchestrators", ss.handleOrchestrators)
-	return mux
-}
-
-// handleOrchestrators handles HTTP GET requests to the /orchestrators endpoint.
-// It returns a list of orchestrators in JSON format.
-func (ss *EmbeddedWebhookServer) handleOrchestrators(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-
-	type orch struct {
-		Address string `json:"address"`
-	}
-
-	var orchs []orch
-	orchToTest := ss.GetOrchToTest()
-	if orchToTest == "" {
-		// get a read lock to access the orchestrators slice
-		// as it could be updated by the job tester concurrently
-		ss.lock.RLock()
-		for _, o := range ss.orchestrators {
-			orchs = append(orchs, orch{o.ServiceURI})
-		}
-		ss.lock.RUnlock()
-	} else {
-		orchs = []orch{{orchToTest}}
-	}
-
-	ss.logger.InfoContext(r.Context(), "returning orchestrators", slog.Int("count", len(orchs)))
-
-	res, err := json.Marshal(orchs)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
-		return
-	}
-	w.Write(res)
-}
-
 // findParametersByPipelineName searches for a pipeline by name in the configuration file.
 func (ss *EmbeddedWebhookServer) findParametersByPipelineName(pipelineName string) (*config.Pipeline, bool) {
 	for _, pipeline := range ss.config.Pipelines {
@@ -709,18 +537,4 @@ func (ss *EmbeddedWebhookServer) handleStatusCodeError(ctx context.Context, stat
 		slog.String("model", stats.Model),
 		slog.String("orchestrator", stats.Orchestrator))
 	return ss.livepeerService.PostStats(ctx, stats)
-}
-
-// SetOrchToTest sets the orchestrator currently being tested.
-func (ss *EmbeddedWebhookServer) SetOrchToTest(orchServiceUri string) {
-	ss.lock.Lock()
-	defer ss.lock.Unlock()
-	ss.orchToTest = orchServiceUri
-}
-
-// GetOrchToTest retrieves the currently selected orchestrator for testing.
-func (ss *EmbeddedWebhookServer) GetOrchToTest() string {
-	ss.lock.RLock()
-	defer ss.lock.RUnlock()
-	return ss.orchToTest
 }

@@ -59,12 +59,10 @@ func TestBuildExecutionPlanExpandsPromptVariantsForLiveVideo(t *testing.T) {
 		logger:           slog.Default(),
 	}
 
-	orchestrators := []types.Orchestrator{
-		{Address: "0xorch", ServiceURI: "https://orch.example:8935", Active: true},
-	}
-	capabilityMap := map[string]types.OrchestratorCapability{
-		"0xorch": {
-			Address: "0xorch",
+	caps := []types.OrchestratorCapability{
+		{
+			Address:    "0xorch",
+			ServiceURI: "https://orch.example:8935",
 			Pipelines: []types.Pipeline{
 				{
 					Type: "live-video-to-video",
@@ -76,7 +74,7 @@ func TestBuildExecutionPlanExpandsPromptVariantsForLiveVideo(t *testing.T) {
 		},
 	}
 
-	standardJobs, liveBundles := ss.buildExecutionPlan(context.Background(), orchestrators, capabilityMap)
+	standardJobs, liveBundles := ss.buildExecutionPlan(context.Background(), caps)
 	if len(standardJobs) != 0 {
 		t.Fatalf("standard job count = %d, want 0", len(standardJobs))
 	}

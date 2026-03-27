@@ -100,10 +100,11 @@ type Pipeline struct {
 	Models []Model `json:"models"`
 }
 
-// Orchestrator represents an orchestrator, including its address and pipelines.
+// OrchestratorCapability represents an orchestrator, including its address, service URI, and pipelines.
 type OrchestratorCapability struct {
-	Address   string     `json:"address"`
-	Pipelines []Pipeline `json:"pipelines"`
+	Address    string     `json:"address"`
+	ServiceURI string     `json:"serviceURI"`
+	Pipelines  []Pipeline `json:"pipelines"`
 }
 
 // Pipelines is the top-level structure that contains all orchestrators.

@@ -28,11 +28,8 @@ COPY --from=builder /app/jobtester ./
 COPY --from=builder /app/entrypoint.sh ./
 COPY --from=builder /app/test-assets/ ./test-assets/
 
-# Ensure entrypoint.sh is executable
-RUN chmod +x /app/entrypoint.sh
-RUN chmod +x /app/jobtester
-
-EXPOSE 7934
+# Ensure entrypoints and binary are executable
+RUN chmod +x /app/entrypoint.sh /app/jobtester
 
 # Run the binary
 ENTRYPOINT ["entrypoint.sh"]

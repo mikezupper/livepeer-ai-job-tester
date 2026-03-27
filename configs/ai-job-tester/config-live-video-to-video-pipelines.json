@@ -1,47 +1,41 @@
 {
   "region": "NYC",
-  "jobType": "ai",
-  "internalWebServerPort": "7934",
-  "internalWebServerAddress": "0.0.0.0",
+  "jobType" : "ai",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "PUT_YOUR_SECRET_KEY",
-  "disableStatsPosting": true,
+  "disableStatsPosting": false,
   "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
   "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterRequestToken": "None",
   "logger": {
-    "level": "debug",
+    "level": "info",
     "format": "TEXT",
     "modules": {
-      "app": "debug",
-      "server": "debug",
-      "ffmpeg": "debug"
+      "app": "info",
+      "server": "info",
+      "ffmpeg": "info"
     }
   },
   "liveVideo": {
     "mediaServerURL": "rtmp://live-video-to-video-mediamtx:1935",
     "testVideoPath": "test-assets/live-test-video.mp4",
-    "testDurationSeconds": 30,
-    "statusPollTimeoutSeconds": 30,
-    "statusPollIntervalSeconds": 2,
+    "testDurationSeconds": 60,
+    "statusPollTimeoutSeconds": 20,
+    "statusPollIntervalSeconds": 1,
     "metricRetryDelayMilliseconds": 200,
-    "maxMetricAttempts": 450,
+    "maxMetricAttempts": 300,
     "maxProbeAttempts": 5,
     "targetFPS": 12,
-    "maxInitialLatencySeconds": 10,
-    "orchMapping": {
-      "0xdef1c70578b2b5e8589a42e26980687fc5153079": [
-        "https://stream2.speedybird.xyz:18938"
-      ]
-    }
+    "maxInitialLatencySeconds": 8
   },
   "pipelines": [
     {
-      "name": "Live video to video manual local test",
+      "name": "Live video to video",
       "uri": "live-video-to-video",
       "live": true,
       "promptVariants": [
         {
-          "id": "manual-watercolor-low",
+          "id": "watercolor-low",
           "complexity": "low",
           "parameters": {
             "prompt": "watercolor painting style"

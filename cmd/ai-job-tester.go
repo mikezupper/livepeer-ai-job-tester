@@ -19,7 +19,7 @@ import (
 )
 
 // main is the entry point of the application. It loads the configuration file, sets up the HTTP client,
-// initializes the Livepeer service, and starts the embedded webhook server. It also invokes the test job logic.
+// initializes the Livepeer service, and runs the test job logic.
 func main() {
 	// Parse command-line flags to get the configuration file path.
 	configFile := flag.String("f", "configs/config.json", "path to the config file")
@@ -77,20 +77,6 @@ func main() {
 		appLogger.Error("failed to construct webhook server", slog.Any("error", err))
 		os.Exit(1)
 	}
-
-	// Build the address for the server based on the configuration.
-	addr := fmt.Sprintf("%s:%s", cfg.InternalWebServerAddress, cfg.InternalWebServerPort)
-
-	serverCtx, serverCancel := context.WithCancel(ctx)
-	defer serverCancel()
-
-	// Start the server in a separate goroutine to handle requests.
-	go func() {
-		if err := webhookServer.StartServer(serverCtx, addr); err != nil {
-			appLogger.ErrorContext(serverCtx, "server exited with error", slog.Any("error", err))
-			serverCancel()
-		}
-	}()
 
 	// Run the logic to fetch orchestrators, pipelines, and send test jobs.
 	if err := webhookServer.RunTestJobs(ctx); err != nil {

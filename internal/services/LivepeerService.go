@@ -19,11 +19,10 @@ import (
 )
 
 // LivepeerService defines the interface for interacting with the Livepeer Gateway and Leaderboard API.
-// It includes methods to fetch orchestrators, fetch pipelines, and post stats.
+// It includes methods to fetch pipelines and post stats.
 type LivepeerService interface {
-	FetchOrchestrators(ctx context.Context) ([]types.Orchestrator, error) // Fetches orchestrators from the Livepeer Gateway.
-	FetchPipelines(ctx context.Context) (*types.Pipelines, error)         // Fetches pipeline data from the Livepeer Gateway.
-	PostStats(ctx context.Context, stats *types.Stats) error              // Posts stats data to the Leaderboard API.
+	FetchPipelines(ctx context.Context) (*types.Pipelines, error) // Fetches pipeline data from the Livepeer Gateway.
+	PostStats(ctx context.Context, stats *types.Stats) error      // Posts stats data to the Leaderboard API.
 }
 
 // HTTPLivepeerService is an implementation of the LivepeerService interface.
@@ -41,55 +40,6 @@ func NewHTTPLivepeerService(client *http.Client, config *config.Config, logger *
 		logger = slog.Default()
 	}
 	return &HTTPLivepeerService{client: client, config: config, logger: logger}
-}
-
-// FetchOrchestrators fetches the list of registered orchestrators from the Livepeer Gateway.
-// It filters out inactive orchestrators, those without a valid ServiceURI, and applies any test mode filtering based on the configuration.
-func (s *HTTPLivepeerService) FetchOrchestrators(ctx context.Context) ([]types.Orchestrator, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	s.logger.InfoContext(ctx, "fetching registered orchestrators")
-	url := fmt.Sprintf("%s/registeredOrchestrators", s.config.BroadcasterCliEndpoint)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetchOrchestrators: unexpected status code %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var orchestrators []types.Orchestrator
-	if err := json.Unmarshal(body, &orchestrators); err != nil {
-		return nil, err
-	}
-
-	var filtered []types.Orchestrator
-	for _, orchestrator := range orchestrators {
-		orchestrator.Address = strings.ToLower(strings.TrimSpace(orchestrator.Address))
-		if orchestrator.Active && orchestrator.ServiceURI != "" {
-			filtered = append(filtered, orchestrator)
-		}
-	}
-
-	s.logger.InfoContext(ctx, "orchestrators filtered",
-		slog.Int("fetched", len(orchestrators)),
-		slog.Int("active", len(filtered)))
-
-	return filtered, nil
 }
 
 // FetchPipelines fetches the available pipeline configurations from the Livepeer Gateway.
@@ -153,7 +103,12 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 	for _, orch := range netCaps.Orchestrators {
 		totalOrchs++
 		orchAddr := strings.ToLower(strings.TrimSpace(orch.Address))
-		orchCap := types.OrchestratorCapability{Address: orchAddr}
+		orchURI := strings.TrimSpace(orch.OrchURI)
+		if orchURI == "" {
+			s.logger.WarnContext(ctx, "skipping orch with empty orch_uri", slog.String("orch", orchAddr))
+			continue
+		}
+		orchCap := types.OrchestratorCapability{Address: orchAddr, ServiceURI: orchURI}
 		// -------- Per-orchestrator summary counters --------
 		pipelineCount := 0
 		modelCount := 0
