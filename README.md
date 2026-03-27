@@ -3,7 +3,7 @@
 ## Overview
 The **Livepeer AI Job Tester** is a versatile tool for executing AI test jobs across all Livepeer Orchestrators on the Livepeer AI Network. Its purpose is to ensure each Orchestrator is tested only on the pipelines and models they support, allowing seamless testing and the production of network reliability metrics.
 
-For a visual walkthrough of the live video path, see [docs/live_video_flow.md](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/docs/live_video_flow.md).
+For a visual walkthrough of the live video path, see [docs/live_video_flow.md](docs/live_video_flow.md).
 
 ## Key Features
 
@@ -171,7 +171,7 @@ To leverage this, you must configure this second Gateway with the exact Orchestr
 - `~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+$` – Matches ai-job-tester ingest stream IDs and uses `runOnReady` to invoke the Gateway CLI as soon as the tester pushes the input RTMP stream. Update this line to point to the URI of the tester Gateway.
 - `~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+-out$` – Records only the plain playback output stream under `recordings/live-video/output/<stream_id>-out/`, allowing you to inspect the final video produced by the orchestrator without also recording request-scoped internal output paths.
 
-Ensure the Mediamtx container shares the same network namespace as the Gateway so these hooks can execute successfully. The checked-in [`docker-compose-media-mtx.yml`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/docker-compose-media-mtx.yml) already bind-mounts [`./recordings`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/recordings) to `/app/recordings` inside the container so recordings are visible on the host.
+Start MediaMTX in the same `docker compose` project as the Gateway so the default Compose network provides container-to-container name resolution for the `runOnReady` hook. There is no custom external Docker network to create for the checked-in compose files. The checked-in [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) bind-mounts [`./recordings`](recordings) to `/app/recordings` inside the container so recordings are visible on the host.
 
 Also, the `aiJobTesterStream` stream key prefix is defined in the go code and any changes to it must be updated in this config as well!
 
@@ -318,9 +318,9 @@ Useful local override knobs:
 - `LOCAL_STARTUP_RETRIES` defaults to `4`
 - `LOCAL_STARTUP_RETRY_DELAY_SECONDS` defaults to `10`
 - `POST_RUN_SLEEP_SECONDS` defaults to `600`
-- live prompt startup retry attempts inside the tester are currently a code-level default in [`internal/server/live_retry.go`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/internal/server/live_retry.go), not a JSON config field. The current default is `2` retries per prompt after the initial attempt.
+- live prompt startup retry attempts inside the tester are currently a code-level default in [`internal/server/live_retry.go`](internal/server/live_retry.go), not a JSON config field. The current default is `2` retries per prompt after the initial attempt.
 
-A checked-in manual-testing config is available at [`configs/config-live-video-to-video-local.json`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/configs/config-live-video-to-video-local.json). It narrows the run to one orch/service URI and lengthens the stream duration for manual playback verification.
+A checked-in manual-testing config is available at [`configs/config-live-video-to-video-local.json`](configs/config-live-video-to-video-local.json). It narrows the run to one orch/service URI and lengthens the stream duration for manual playback verification.
 It also sets `disableStatsPosting: true`, so local runs log the final stats payload instead of trying to POST to the leaderboard API.
 
 Example targeting the checked-in local manual config and keeping the container alive for 15 minutes after the run:
@@ -340,6 +340,14 @@ docker compose \
 The override builds the local image from this repo and bind-mounts `./configs` into the container at `/app/local-configs`.
 It also retries the one-shot tester command locally if the Gateway is still booting, which helps with transient `connection refused` races during `docker compose up`.
 
+Local path and volume requirements for these compose files:
+
+- `./configs` is already part of this repo and is bind-mounted read-only into the local override container at `/app/local-configs`. You do not need to create a separate host directory for it.
+- `./recordings` is the host folder used by MediaMTX for saved playback output. Keep this folder present in the repo so the bind mount in [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) has a host path to write to.
+- `ai-job-tester` is an external Docker volume used by the cron-oriented compose files to provide `/app/configs` inside the tester container.
+- `tester-gateway-lpData` is an external Docker volume used by the gateway container for `/root/.lpData`.
+- No custom Docker network needs to be created manually. When you launch the checked-in compose files together, Docker Compose uses its default project network.
+
 If you do not want to use Docker for a one-off local run, you can still execute the binary directly instead of using the cron-based container entrypoint:
 
 ```bash
@@ -356,10 +364,10 @@ Expected local topology:
 
 For manual inspection:
 
-1. Start from [`configs/config-live-video-to-video-local.json`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/configs/config-live-video-to-video-local.json).
+1. Start from [`configs/config-live-video-to-video-local.json`](configs/config-live-video-to-video-local.json).
 2. Update `liveVideo.orchMapping` so it points at the orch and service URI you want to inspect.
 3. Adjust `liveVideo.testDurationSeconds` if you want a shorter or longer manual watch window.
-4. Ensure MediaMTX is started with [`docker-compose-media-mtx.yml`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/docker-compose-media-mtx.yml). That compose file bind-mounts [`./recordings`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/recordings) to `/app/recordings` inside the MediaMTX container, and [`configs/mediamtx/mediamtx.yml`](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/configs/mediamtx/mediamtx.yml) records plain playback `-out` streams under `recordings/live-video/output/<stream_id>-out/`.
+4. Ensure MediaMTX is started with [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml) as part of the same `docker compose` project as the gateway/tester containers. No custom Docker network is required. That compose file bind-mounts [`./recordings`](recordings) to `/app/recordings` inside the MediaMTX container, and [`configs/mediamtx/mediamtx.yml`](configs/mediamtx/mediamtx.yml) records plain playback `-out` streams under `recordings/live-video/output/<stream_id>-out/`.
 5. Run the tester once with the Compose override or direct binary.
 6. Use the logged `stream_id` or `playback_url` to find the recording. The output stream will be written under a path like `recordings/live-video/output/<stream_id>-out/<timestamp>.ts`. When `-liveManualAttachSeconds` is non-zero, the tester also logs a manual attach window message and waits before metric collection begins.
    If no recording directory appears for a prompt, the usual cause is that the live output stream never came online for that prompt, not that MediaMTX failed after recording had already started.
@@ -526,7 +534,7 @@ The use of docker is encouraged but not required.
 To run the AI Job Tester application, you will need `docker compose`.
 
 The `docker-compose.yml` will allow you to run the applications needed: AI Job Tester and Livepeer Gateway.
-You must create the following docker volumes (and configure them appropriately)
+You must create the following Docker volumes before starting the cron-oriented compose files, and configure them appropriately:
 
 _ai-job-tester_ - stores the `configs/config.json` file needed to run `ai-job-tester`. You must configure the file and place in the volume's directory.
 
@@ -535,6 +543,16 @@ _ai-job-tester_ - stores the `configs/config.json` file needed to run `ai-job-te
 _tester-gateway-lpData_ - The Livepeer Gateway's `.lpData` folder. You must configure the required livepeer files and place in the volume's directory.
 
 `docker volume create tester-gateway-lpData`
+
+Local folders used by the checked-in compose files:
+
+- [`./configs`](configs) is a repo directory that already exists and contains checked-in config files.
+- [`./recordings`](recordings) is the host bind-mount target for MediaMTX output when you use [`docker-compose-media-mtx.yml`](docker-compose-media-mtx.yml).
+
+Docker networking:
+
+- No custom Docker network needs to be created manually for the checked-in compose files.
+- If you need MediaMTX to resolve the gateway container name, start the relevant compose files in the same `docker compose` project so they share Compose's default project network.
 
 ### Job Scheduling
 
