@@ -709,7 +709,7 @@ paths:
   # Record only the plain playback output stream for each test run.
   # This excludes request-scoped internal output paths like ...-<requestid>-out.
   "~^aiJobTesterStream-[^-]+-.+-[0-9a-f]{8}-[0-9]+-out$":
-    record: yes
+    record: no
     recordPath: /app/recordings/live-video/output/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: mpegts
 
