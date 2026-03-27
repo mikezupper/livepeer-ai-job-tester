@@ -158,6 +158,6 @@ sequenceDiagram
 
 ## Related Docs
 
-- [README.md](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/README.md)
-- [application_architecture.png](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/docs/application_architecture.png)
-- [logical_architecture.png](/home/julian/Documents/development/spe-work/livepeer-ai-job-tester/docs/logical_architecture.png)
+- [README.md](../README.md)
+- [application_architecture.png](application_architecture.png)
+- [logical_architecture.png](logical_architecture.png)

@@ -22,7 +22,7 @@
 go.work
 
 # runtime folders and files generated when running the tester from this project
-mediamtx-recordings
-debug-artifacts
+recordings
+
 # binary output file
 ai-job-tester
