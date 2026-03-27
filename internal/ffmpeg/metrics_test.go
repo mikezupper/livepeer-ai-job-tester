@@ -94,3 +94,15 @@ func TestScore(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFramePTSSupportsShowinfoOutput(t *testing.T) {
+	line := "[Parsed_showinfo_0 @ 0x123] n:   1 pts:   3000 pts_time:3.000 pos:1024 fmt:yuv420p"
+
+	got, ok := parseFramePTS(line)
+	if !ok {
+		t.Fatal("parseFramePTS() did not parse showinfo output")
+	}
+	if got != 3.0 {
+		t.Fatalf("parseFramePTS() = %v, want 3.0", got)
+	}
+}

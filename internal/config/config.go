@@ -18,6 +18,7 @@ type Config struct {
 	InternalWebServerAddress string           `json:"internalWebServerAddress"`
 	MetricsApiEndpoint       string           `json:"metricsApiEndpoint"`
 	MetricsSecret            string           `json:"metricsSecret"`
+	DisableStatsPosting      bool             `json:"disableStatsPosting,omitempty"`
 	BroadcasterJobEndpoint   string           `json:"broadcasterJobEndpoint"`
 	BroadcasterCliEndpoint   string           `json:"broadcasterCliEndpoint"`
 	BroadcasterRequestToken  string           `json:"broadcasterRequestToken"`
@@ -41,18 +42,17 @@ type Pipeline struct {
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
 type LiveVideoConfig struct {
-	MediaServerURL               string                `json:"mediaServerURL"`
-	TestVideoPath                string                `json:"testVideoPath"`
-	TestDurationSeconds          int                   `json:"testDurationSeconds"`
-	StatusPollTimeoutSeconds     int                   `json:"statusPollTimeoutSeconds"`
-	StatusPollIntervalSeconds    int                   `json:"statusPollIntervalSeconds,omitempty"`
-	MetricRetryDelayMilliseconds int                   `json:"metricRetryDelayMilliseconds,omitempty"`
-	MaxMetricAttempts            int                   `json:"maxMetricAttempts,omitempty"`
-	MaxProbeAttempts             int                   `json:"maxProbeAttempts,omitempty"`
-	OrchMapping                  map[string][]string   `json:"orchMapping,omitempty"`
-	TargetFPS                    float64               `json:"targetFPS,omitempty"`
-	MaxInitialLatencySeconds     float64               `json:"maxInitialLatencySeconds,omitempty"`
-	DebugArtifacts               *DebugArtifactsConfig `json:"debugArtifacts,omitempty"`
+	MediaServerURL               string              `json:"mediaServerURL"`
+	TestVideoPath                string              `json:"testVideoPath"`
+	TestDurationSeconds          int                 `json:"testDurationSeconds"`
+	StatusPollTimeoutSeconds     int                 `json:"statusPollTimeoutSeconds"`
+	StatusPollIntervalSeconds    int                 `json:"statusPollIntervalSeconds,omitempty"`
+	MetricRetryDelayMilliseconds int                 `json:"metricRetryDelayMilliseconds,omitempty"`
+	MaxMetricAttempts            int                 `json:"maxMetricAttempts,omitempty"`
+	MaxProbeAttempts             int                 `json:"maxProbeAttempts,omitempty"`
+	OrchMapping                  map[string][]string `json:"orchMapping,omitempty"`
+	TargetFPS                    float64             `json:"targetFPS,omitempty"`
+	MaxInitialLatencySeconds     float64             `json:"maxInitialLatencySeconds,omitempty"`
 }
 
 // PromptVariant defines a single live video prompt scenario to run against an orchestrator.
@@ -60,14 +60,6 @@ type PromptVariant struct {
 	ID         string                 `json:"id"`
 	Complexity string                 `json:"complexity"`
 	Parameters map[string]interface{} `json:"parameters"`
-}
-
-// DebugArtifactsConfig controls optional live-debug artifact capture.
-type DebugArtifactsConfig struct {
-	Enabled              bool   `json:"enabled"`
-	CaptureOnFailureOnly bool   `json:"captureOnFailureOnly,omitempty"`
-	MaxFrames            int    `json:"maxFrames,omitempty"`
-	OutputDir            string `json:"outputDir,omitempty"`
 }
 
 // LoggerConfig exposes runtime log configuration knobs.
@@ -160,15 +152,6 @@ func normalizeAndValidate(cfg *Config) error {
 					return fmt.Errorf("pipeline %q promptVariant %q has invalid complexity %q", pipeline.Uri, id, variant.Complexity)
 				}
 			}
-		}
-	}
-
-	if cfg.LiveVideo != nil && cfg.LiveVideo.DebugArtifacts != nil {
-		if cfg.LiveVideo.DebugArtifacts.MaxFrames <= 0 {
-			cfg.LiveVideo.DebugArtifacts.MaxFrames = 3
-		}
-		if strings.TrimSpace(cfg.LiveVideo.DebugArtifacts.OutputDir) == "" {
-			cfg.LiveVideo.DebugArtifacts.OutputDir = "debug-artifacts/live-video"
 		}
 	}
 

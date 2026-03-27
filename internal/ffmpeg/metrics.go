@@ -152,6 +152,17 @@ func parseFramePTS(line string) (float64, bool) {
 		}
 	}
 
+	if idx := strings.Index(line, "pts_time:"); idx >= 0 {
+		after := line[idx+len("pts_time:"):]
+		token := after
+		if cut := strings.IndexAny(after, " \t"); cut >= 0 {
+			token = after[:cut]
+		}
+		if parsed, err := strconv.ParseFloat(token, 64); err == nil {
+			return parsed, true
+		}
+	}
+
 	return 0, false
 }
 

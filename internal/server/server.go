@@ -48,6 +48,7 @@ type EmbeddedWebhookServer struct {
 	ffmpegClient          ffmpeg.Client
 	statusClient          *status.Client
 	liveManualAttachDelay time.Duration
+	liveRetryPolicy       liveRetryPolicy
 	logger                *slog.Logger
 }
 
@@ -84,6 +85,7 @@ func NewEmbeddedWebhookServer(
 		ffmpegClient:          ffmpegClient,
 		statusClient:          statusClient,
 		liveManualAttachDelay: runtimeOptions.LiveManualAttachDelay,
+		liveRetryPolicy:       defaultLiveRetryPolicy,
 		logger:                logger,
 		jobTesterMetrics:      services.NewJobTesterMetrics(),
 	}, nil
@@ -311,7 +313,7 @@ func (ss *EmbeddedWebhookServer) buildExecutionPlan(ctx context.Context, orchest
 							OrchestratorAddress: orch.Address,
 							ServiceURI:          uri,
 							PipelineName:        pipelineName,
-							Model:               model,
+							CapabilityModel:     model,
 							Prompts:             make([]livePromptJob, 0, len(cfgPipeline.PromptVariants)),
 						}
 						for _, variant := range cfgPipeline.PromptVariants {
@@ -385,6 +387,10 @@ func (ss *EmbeddedWebhookServer) resolveServiceURIs(orchestrator types.Orchestra
 	if cfg, ok := ss.findParametersByPipelineName(pipelineName); ok && cfg.Live {
 		overrides := ss.lookupLiveVideoOverrides(orchestrator.Address)
 		if len(overrides) > 0 {
+			ss.logger.Debug("resolved live service URIs from config override",
+				slog.String("orchestrator", orchestrator.Address),
+				slog.String("pipeline", pipelineName),
+				slog.Any("service_uris", overrides))
 			return overrides, true
 		}
 	}
@@ -394,6 +400,10 @@ func (ss *EmbeddedWebhookServer) resolveServiceURIs(orchestrator types.Orchestra
 		return nil, false
 	}
 
+	ss.logger.Debug("resolved service URI from registered orchestrator",
+		slog.String("orchestrator", orchestrator.Address),
+		slog.String("pipeline", pipelineName),
+		slog.String("service_uri", uri))
 	return []string{uri}, false
 }
 

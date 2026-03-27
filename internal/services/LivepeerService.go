@@ -448,10 +448,22 @@ func (s *HTTPLivepeerService) PostStats(ctx context.Context, stats *types.Stats)
 		ctx = context.Background()
 	}
 
-	// Marshal the stats data into JSON format.
 	input, err := json.Marshal(stats)
 	if err != nil {
 		return err
+	}
+
+	// Local/manual runs can disable leaderboard posting entirely. In that mode we
+	// still emit the final stats payload so engineers can inspect exactly what
+	// would have been posted without needing a metrics API server running.
+	if s.config.DisableStatsPosting {
+		s.logger.InfoContext(ctx, "stats posting disabled; payload logged locally",
+			slog.String("region", stats.Region),
+			slog.String("orchestrator", stats.Orchestrator),
+			slog.String("pipeline", stats.Pipeline),
+			slog.String("model", stats.Model),
+			slog.String("payload", string(input)))
+		return nil
 	}
 
 	// Create a new POST request with the stats data.

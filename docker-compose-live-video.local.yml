@@ -37,4 +37,3 @@ services:
       - POST_RUN_SLEEP_SECONDS=${POST_RUN_SLEEP_SECONDS:-600}
     volumes:
       - ./configs:/app/local-configs:ro
-      - ./debug-artifacts:/app/debug-artifacts

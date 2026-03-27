@@ -5,9 +5,9 @@
   "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "PUT_YOUR_SECRET_KEY",
+  "disableStatsPosting": true,
   "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
   "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
-  "broadcasterRequestToken": "PUT_OPTIONAL_BEARER_TOKEN_HERE",
   "logger": {
     "level": "debug",
     "format": "TEXT",
@@ -18,25 +18,19 @@
     }
   },
   "liveVideo": {
-    "mediaServerURL": "rtmp://10.0.0.135:1935",
+    "mediaServerURL": "rtmp://live-video-to-video-mediamtx:1935",
     "testVideoPath": "test-assets/live-test-video.mp4",
-    "testDurationSeconds": 240,
+    "testDurationSeconds": 30,
     "statusPollTimeoutSeconds": 30,
-    "statusPollIntervalSeconds": 1,
+    "statusPollIntervalSeconds": 2,
     "metricRetryDelayMilliseconds": 200,
     "maxMetricAttempts": 450,
     "maxProbeAttempts": 5,
     "targetFPS": 12,
     "maxInitialLatencySeconds": 10,
-    "debugArtifacts": {
-      "enabled": true,
-      "captureOnFailureOnly": true,
-      "maxFrames": 3,
-      "outputDir": "debug-artifacts/live-video"
-    },
     "orchMapping": {
-      "0x08f76e106a2dd4f6385efc8ea6c69a2816082461": [
-        "https://ai.brzeczyszczykiewicz.work:8935"
+      "0xdef1c70578b2b5e8589a42e26980687fc5153079": [
+        "https://stream2.speedybird.xyz:18938"
       ]
     }
   },
@@ -45,15 +39,26 @@
       "name": "Live video to video manual local test",
       "uri": "live-video-to-video",
       "live": true,
-      "parameters": {
-        "safety_check": false
-      },
       "promptVariants": [
         {
           "id": "manual-watercolor-low",
           "complexity": "low",
           "parameters": {
             "prompt": "watercolor painting style"
+          }
+        },
+        {
+          "id": "cyberpunk-medium",
+          "complexity": "medium",
+          "parameters": {
+            "prompt": "a cinematic cyberpunk street with neon reflections and rainy atmosphere"
+          }
+        },
+        {
+          "id": "festival-high",
+          "complexity": "high",
+          "parameters": {
+            "prompt": "a vibrant futuristic street festival with floating lanterns, layered holograms, dramatic depth, and richly detailed costumes"
           }
         }
       ]

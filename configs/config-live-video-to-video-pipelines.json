@@ -149,9 +149,6 @@
       "name": "Live video to video",
       "uri": "live-video-to-video",
       "live": true,
-      "parameters": {
-        "safety_check": false
-      },
       "promptVariants": [
         {
           "id": "watercolor-low",

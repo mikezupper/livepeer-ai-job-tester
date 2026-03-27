@@ -14,7 +14,7 @@ services:
       - tester-gateway
 
   tester-gateway:
-    image: tztcloud/go-livepeer:v0.8.9-NaaP-M1
+    image: tztcloud/go-livepeer:latest
     restart: unless-stopped
     hostname: ai-tester-gateway
     container_name: ai-tester-gateway
@@ -29,6 +29,7 @@ services:
               -network=arbitrum-one-mainnet
               -serviceAddr=ai-tester-gateway:8935
               -cliAddr=ai-tester-gateway:7935
+              -orchAddr=stream2.speedybird.xyz:18938
               -gateway=true
               -monitor=true
               -maxPricePerUnit=125000000

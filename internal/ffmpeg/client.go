@@ -17,7 +17,7 @@ import (
 
 // Client wraps ffmpeg/ffprobe process management so other packages remain decoupled from command details.
 type Client interface {
-	RunStream(ctx context.Context, ingestURL, playbackURL, testVideoPath string, opts StreamOptions) (*Metrics, error)
+	RunStream(ctx context.Context, ingestURL, playbackURL, testVideoPath string, opts StreamOptions) (*StreamResult, error)
 }
 
 // StreamStatusClient defines the behaviour needed to wait for Gateway readiness.
@@ -35,6 +35,11 @@ type StreamOptions struct {
 	MetricRetryDelay   time.Duration
 	MaxMetricAttempts  int
 	MaxProbeAttempts   int
+}
+
+// StreamResult captures the outcome produced while running a live stream.
+type StreamResult struct {
+	Metrics *Metrics
 }
 
 const (
@@ -230,8 +235,9 @@ func (c *client) waitForManualAttachWindow(ctx context.Context, ffmpegErrCh <-ch
 }
 
 // RunStream pushes a test video to the ingest URL and probes playback to produce delivery metrics.
-func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVideoPath string, opts StreamOptions) (*Metrics, error) {
+func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVideoPath string, opts StreamOptions) (*StreamResult, error) {
 	opts = opts.withDefaults()
+	result := &StreamResult{}
 
 	if _, err := os.Stat(testVideoPath); err != nil {
 		// Failures accessing the video file is on the tester side
@@ -252,11 +258,12 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 	readyDuration, err := c.waitForReadiness(ctx, ffmpegErrCh, opts, log)
 	if err != nil {
 		push.Cancel()
-		return nil, err
+		return result, err
 	}
+
 	if err := c.waitForManualAttachWindow(ctx, ffmpegErrCh, playbackURL, opts.ManualAttachDelay, log); err != nil {
 		push.Cancel()
-		return nil, err
+		return result, err
 	}
 
 	metrics, metricsErr := c.collectMetricsWithRetry(ctx, push, ffmpegErrCh, playbackURL, opts, log)
@@ -270,7 +277,7 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 		default:
 		}
 		log.ErrorContext(ctx, "failed to collect live video metrics", slog.Any("error", metricsErr))
-		return nil, metricsErr
+		return result, metricsErr
 	}
 
 	push.Cancel()
@@ -294,7 +301,8 @@ func (c *client) RunStream(ctx context.Context, ingestURL, playbackURL, testVide
 		slog.Float64("gateway_ready_seconds", readyDuration.Seconds()),
 	)
 
-	return metrics, nil
+	result.Metrics = metrics
+	return result, nil
 }
 
 func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string, duration time.Duration, ingestStart time.Time) (*Metrics, error) {
@@ -307,29 +315,21 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 		cancelProbe()
 	}()
 
-	args := buildFFProbeArgs(playbackURL)
+	args := buildPlaybackProbeArgs(playbackURL)
 
-	c.probeLogger.DebugContext(ctx, "ffprobe command", slog.String("args", strings.Join(args, " ")))
+	c.probeLogger.DebugContext(ctx, "playback probe command", slog.String("args", strings.Join(args, " ")))
 
-	cmd := exec.CommandContext(probeCtx, "ffprobe", args...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		c.probeLogger.ErrorContext(ctx, "failed to get ffprobe stdout", slog.Any("error", err))
-		cancelProbe()
-		return nil, err
-	}
+	cmd := exec.CommandContext(probeCtx, "ffmpeg", args...)
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		c.probeLogger.ErrorContext(ctx, "failed to get ffprobe stderr", slog.Any("error", err))
+		c.probeLogger.ErrorContext(ctx, "failed to get playback probe stderr", slog.Any("error", err))
 		cancelProbe()
 		return nil, err
 	}
-	pipeProcessOutput(ctx, stderr, c.probeLogger, "ffprobe")
 
 	if err := cmd.Start(); err != nil {
-		c.probeLogger.ErrorContext(ctx, "failed to start ffprobe", slog.Any("error", err))
+		c.probeLogger.ErrorContext(ctx, "failed to start playback probe", slog.Any("error", err))
 		cancelProbe()
 		return nil, err
 	}
@@ -337,7 +337,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 	metrics := newMetrics(ingestStart)
 
-	scanner := bufio.NewScanner(stdout)
+	scanner := bufio.NewScanner(stderr)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 
 	waitCh := make(chan error, 1)
@@ -345,7 +345,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		c.probeLogger.DebugContext(ctx, "raw ffprobe output", slog.String("line", line))
+		c.probeLogger.DebugContext(ctx, "raw playback probe output", slog.String("line", line))
 
 		select {
 		case <-ctx.Done():
@@ -366,7 +366,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 	}
 
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		c.probeLogger.ErrorContext(ctx, "error reading ffprobe output", slog.Any("error", err))
+		c.probeLogger.ErrorContext(ctx, "error reading playback probe output", slog.Any("error", err))
 		cancelProbe()
 		<-waitCh
 		return nil, err
@@ -377,7 +377,7 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 		waitErr = nil
 	}
 	if waitErr != nil && !errors.Is(waitErr, context.Canceled) && metrics.totalFrames == 0 {
-		// If ffprobe failed and we have no frames, treat as an orchestrator issue
+		// If the playback reader failed and we have no frames, treat as an orchestrator issue.
 		return nil, ErrProbeFailed
 	}
 
@@ -390,6 +390,19 @@ func (c *client) collectLiveVideoMetrics(ctx context.Context, playbackURL string
 	return metrics, nil
 }
 
+func buildPlaybackProbeArgs(playbackURL string) []string {
+	return []string{
+		"-hide_banner",
+		"-loglevel", "info",
+		"-i", playbackURL,
+		"-map", "0:v:0",
+		"-vf", "showinfo",
+		"-an",
+		"-f", "null",
+		"-",
+	}
+}
+
 func pipeProcessOutput(ctx context.Context, reader io.ReadCloser, logger *slog.Logger, prefix string) {
 	go func() {
 		defer reader.Close()
@@ -399,19 +412,4 @@ func pipeProcessOutput(ctx context.Context, reader io.ReadCloser, logger *slog.L
 			logger.DebugContext(ctx, "process output", slog.String("prefix", prefix), slog.String("line", scanner.Text()))
 		}
 	}()
-}
-
-func buildFFProbeArgs(playbackURL string) []string {
-	return []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-select_streams", "v:0",
-		"-show_frames",
-		"-show_entries", "frame=pkt_pts_time,best_effort_timestamp_time",
-		"-of", "default=noprint_wrappers=1:nokey=0",
-		"-probesize", "32M",
-		"-analyzeduration", "5M",
-		"-read_intervals", "%+30",
-		playbackURL,
-	}
 }

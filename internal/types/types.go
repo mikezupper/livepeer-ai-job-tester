@@ -6,28 +6,29 @@ import "encoding/json"
 // the region, pipeline used, model details, success rate, and round-trip time.
 // It also stores errors encountered during the test and a timestamp.
 type Stats struct {
-	Region             string   `json:"region"`
-	Pipeline           string   `json:"pipeline"`
-	Model              string   `json:"model"`
-	ModelIsWarm        bool     `json:"model_is_warm"`
-	InputParameters    string   `json:"input_parameters"`
-	ResponsePayload    string   `json:"response_payload"`
-	Orchestrator       string   `json:"orchestrator"`
-	SuccessRate        int      `json:"success_rate"`
-	RoundTripTime      float64  `json:"round_trip_time"`
-	Errors             []Error  `json:"errors"`
-	Timestamp          int64    `json:"timestamp"`
-	TestOutcome        string   `json:"test_outcome,omitempty"`
-	UnscoredReason     string   `json:"unscored_reason,omitempty"`
-	PromptID           string   `json:"prompt_id,omitempty"`
-	PromptComplexity   string   `json:"prompt_complexity,omitempty"`
-	PromptVerification string   `json:"prompt_verification,omitempty"`
-	PromptConfirmed    *bool    `json:"prompt_confirmed,omitempty"`
-	StreamValid        *bool    `json:"stream_valid,omitempty"`
-	StreamID           string   `json:"stream_id,omitempty"`
-	ParamsHash         string   `json:"params_hash,omitempty"`
-	DeferAttempts      int      `json:"defer_attempts,omitempty"`
-	DebugArtifacts     []string `json:"debug_artifacts,omitempty"`
+	Region   string `json:"region"`
+	Pipeline string `json:"pipeline"`
+	// Model stores the capability-advertised model name. For live runs this is
+	// the top-level gateway/worker selector, not an inner runner model_id override.
+	Model              string  `json:"model"`
+	ModelIsWarm        bool    `json:"model_is_warm"`
+	InputParameters    string  `json:"input_parameters"`
+	ResponsePayload    string  `json:"response_payload"`
+	Orchestrator       string  `json:"orchestrator"`
+	SuccessRate        int     `json:"success_rate"`
+	RoundTripTime      float64 `json:"round_trip_time"`
+	Errors             []Error `json:"errors"`
+	Timestamp          int64   `json:"timestamp"`
+	TestOutcome        string  `json:"test_outcome,omitempty"`
+	UnscoredReason     string  `json:"unscored_reason,omitempty"`
+	PromptID           string  `json:"prompt_id,omitempty"`
+	PromptComplexity   string  `json:"prompt_complexity,omitempty"`
+	PromptVerification string  `json:"prompt_verification,omitempty"`
+	PromptConfirmed    *bool   `json:"prompt_confirmed,omitempty"`
+	StreamValid        *bool   `json:"stream_valid,omitempty"`
+	StreamID           string  `json:"stream_id,omitempty"`
+	ParamsHash         string  `json:"params_hash,omitempty"`
+	DeferAttempts      int     `json:"defer_attempts,omitempty"`
 
 	OmitScore bool `json:"-"`
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"livepeer-job-tester/internal/config"
@@ -87,5 +88,39 @@ func TestBuildExecutionPlanExpandsPromptVariantsForLiveVideo(t *testing.T) {
 	}
 	if got, want := ss.jobTesterMetrics.ExpectedTotalJobs, 2; got != want {
 		t.Fatalf("expected job count = %d, want %d", got, want)
+	}
+}
+
+func TestMergeLiveParamsDoesNotInjectModelIDByDefault(t *testing.T) {
+	got := mergeLiveParams(
+		map[string]interface{}{"use_safety_checker": false},
+		map[string]interface{}{"prompt": "watercolor painting style"},
+	)
+
+	want := map[string]interface{}{
+		"use_safety_checker": false,
+		"prompt":             "watercolor painting style",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mergeLiveParams() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMergeLiveParamsPreservesExplicitModelIDOverride(t *testing.T) {
+	got := mergeLiveParams(
+		map[string]interface{}{
+			"use_safety_checker": false,
+			"model_id":           "stabilityai/sdxl-turbo",
+		},
+		map[string]interface{}{"prompt": "watercolor painting style"},
+	)
+
+	want := map[string]interface{}{
+		"use_safety_checker": false,
+		"model_id":           "stabilityai/sdxl-turbo",
+		"prompt":             "watercolor painting style",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mergeLiveParams() = %#v, want %#v", got, want)
 	}
 }

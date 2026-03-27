@@ -37,11 +37,8 @@ func TestNormalizeAndValidateRejectsInvalidPromptComplexity(t *testing.T) {
 	}
 }
 
-func TestNormalizeAndValidateAppliesDebugArtifactDefaults(t *testing.T) {
+func TestNormalizeAndValidateInitializesMissingPipelineParameters(t *testing.T) {
 	cfg := &Config{
-		LiveVideo: &LiveVideoConfig{
-			DebugArtifacts: &DebugArtifactsConfig{Enabled: true},
-		},
 		Pipelines: []Pipeline{
 			{
 				Name: "Live video to video",
@@ -57,10 +54,7 @@ func TestNormalizeAndValidateAppliesDebugArtifactDefaults(t *testing.T) {
 	if err := normalizeAndValidate(cfg); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if got, want := cfg.LiveVideo.DebugArtifacts.MaxFrames, 3; got != want {
-		t.Fatalf("maxFrames default = %d, want %d", got, want)
-	}
-	if got, want := cfg.LiveVideo.DebugArtifacts.OutputDir, "debug-artifacts/live-video"; got != want {
-		t.Fatalf("outputDir default = %q, want %q", got, want)
+	if cfg.Pipelines[0].Parameters == nil {
+		t.Fatal("expected pipeline parameters to be initialized")
 	}
 }
