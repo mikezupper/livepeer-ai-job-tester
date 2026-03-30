@@ -39,7 +39,7 @@ The key components of the AI Job Tester application
 The main entrypoint for the application. This component is responsible for controlling the flow of the entire application
 (find/test orchestrators, fetch pipeline/models, tracking job metrics, record job stats).
 
-* **Embedded Webhook Server** - The HTTP endpoint that allows the Livepeer Gateway to determine which Orchestrator should be selected. The Livepeer Gateway refers to this as the "Orch Webhook URL".
+* **Job Runner** - Fetches network capabilities from the Gateway CLI endpoint, builds an execution plan per orchestrator/pipeline/model, and dispatches test jobs. This component has no inbound HTTP listener; it makes only outbound HTTP requests.
 * **Livepeer Client Service** - This component handles all HTTP Client interactions:
   1. _Livepeer Gateway_ -  Registered Orchestrators, Network Capabilities - Pipelines/Models, and AI Job processing
   2. _Leaderboard API Server_ - Post AI Job stats to the Leaderboard API Server (see Figure 1)
@@ -86,10 +86,25 @@ Build the binary
 
 `go build -o ai-job-tester ./cmd/ai-job-tester.go`
 
-### Configuration the Application
-The application has several one command line argument `-f <full path to config file>`
+### Configuring the Application
 
-The example file is located `configs/config.json`
+#### Command-Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `-f <path>` | Path to the JSON config file. _(default: `configs/config.json`)_ |
+| `-liveManualAttachSeconds <n>` | Local-only: delay in seconds after live stream readiness before metrics collection begins. Gives you time to open the playback URL in a player for manual inspection. _(default: 0)_ |
+
+#### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `TEST_INDIVIDUAL_ORCHESTRATORS` | When set to any non-empty value, the tester omits the `orchestrator=` parameter from both the job request body and the broadcaster job endpoint URL. This allows the Gateway to select an orchestrator via normal network routing rather than pinning to a specific one. Used by the `live-network` Docker Compose profile. |
+| `CRONTAB_SCHEDULE` | Cron expression controlling how often the tester runs inside the container. Set in `docker-compose.yml` per profile. |
+| `RUN_IMMEDIATE` | When `true`, runs the tester once immediately on container start instead of waiting for the first cron tick. The container exits cleanly after the run. |
+| `CONFIG_FILE` | Path inside the container to the JSON config file. Set in `docker-compose.yml` per profile. |
+
+The example config file is located at `configs/config.json`
 
 #### config.json
 
@@ -101,6 +116,7 @@ This file configures the AI Job Tester application.
 | `jobType`                  | The job type _(default: ai)_. Currently supports `ai`. New Types maybe be added in the future.                                                                                                     |
 | `metricsApiEndpoint`       | The URL to the Leaderboard API [post_stats endpoint](https://github.com/mikezupper/livepeer-leaderboard-serverless/tree/tasks/livepeer.cloud/proposal2/add-ai-job-support#api-reference)           |
 | `metricsSecret`            | The `SECRET` key used by the Leaderboard API Server.                                                                                                                                               |
+| `disableStatsPosting`      | Optional boolean. When `true`, job stats are logged locally instead of being posted to the Leaderboard API. Useful for local debugging.                                                            |
 | `broadcasterJobEndpoint`   | The URL to the Livepeer Gateway AI Job Endpoint.                                                                                                                                                   |
 | `broadcasterCliEndpoint`   | The URL to the Livepeer Gateway CLI port (typically port 7935). Used exclusively to call `getNetworkCapabilities`, which returns orchestrator addresses, service URIs, and pipeline/model capabilities in a single call.                                                                                           |
 | `broadcasterRequestToken`  | Optional: A Unique Token to send with each AI Job.                                                                                                                                                 |
@@ -197,7 +213,7 @@ rtmp://live-video-to-video-mediamtx:1935/aiJobTesterStream-low-watercolor-1a2b3c
 The URL fields map like this:
 
 - `liveVideo.mediaServerURL` supplies `rtmp://live-video-to-video-mediamtx:1935`
-- `orchestrator=` is the service URI returned by `getNetworkCapabilities` (`orch_uri` field) — no manual override needed
+- `orchestrator=` is the service URI returned by `getNetworkCapabilities` (`orch_uri` field) — no manual override needed. **Omitted when `TEST_INDIVIDUAL_ORCHESTRATORS` is set**, allowing the Gateway to route freely.
 - `pipelines[].promptVariants[].parameters` plus `pipelines[].parameters` are merged into the JSON carried by `params=`
 - the `pipeline=` query value comes from live capability discovery and is the orch-advertised selector, not a static config field
 
@@ -226,7 +242,7 @@ Implementation notes from this repo:
 
 - Live prompt scenarios are config-driven and expanded per orch/model/prompt variant.
 - The live payload is encoded into the RTMP query string once, then forwarded unchanged by Mediamtx through `$MTX_QUERY`.
-- Gateway routing fields stay top-level in the RTMP query (`pipeline`, `streamId`, `orchestrator`), while inference params are encoded into a single `params=<json>` query field.
+- Gateway routing fields stay top-level in the RTMP query (`pipeline`, `streamId`, and `orchestrator` when not in individual-orch mode), while inference params are encoded into a single `params=<json>` query field.
 - Prompt verification means the worker reported the expected `last_params_hash`; it does not claim semantic prompt adherence.
 - Busy/capped orchs are deferred and eventually marked `unscored`, not failed.
 - MediaMTX recordings are the source of truth for saved live-output artifacts.
@@ -503,17 +519,19 @@ Rebuild whenever the source code or `Dockerfile` changes.
 
 ## Run the Application
 
-The entire stack is managed through a single [`docker-compose.yml`](docker-compose.yml) with two profiles. Select the profile that matches your intent:
+The entire stack is managed through a single [`docker-compose.yml`](docker-compose.yml) with three profiles. Select the profile that matches your intent:
 
-| Profile | Purpose | Schedule |
-|---------|---------|----------|
-| `batch` | AI batch pipeline testing | Cron every 2 min |
-| `live`  | Live video-to-video testing | Cron every 2 min |
+| Profile        | Purpose                                                  | Default Schedule        |
+|----------------|----------------------------------------------------------|-------------------------|
+| `batch`        | AI batch pipeline testing                                | `*/5 * * * *` (every 5 min) |
+| `live`         | Live video-to-video testing (gateway-routed)             | `*/10 * * * *` (every 10 min) |
+| `live-network` | Live video-to-video testing (individual orch, no gateway pin) | `50 * * * *` (at :50 each hour) |
 
 ```bash
-docker compose --profile batch up -d              # batch (cron, background)
-docker compose --profile live  up -d              # live video (cron, background)
-RUN_IMMEDIATE=true docker compose --profile live up   # live video, run once immediately
+docker compose --profile batch        up -d              # batch (cron, background)
+docker compose --profile live         up -d              # live video (cron, background)
+docker compose --profile live-network up -d              # live video, individual orch mode (cron, background)
+RUN_IMMEDIATE=true docker compose --profile live up      # live video, run once immediately
 ```
 
 Profiles are mutually exclusive. Do not combine them in the same invocation.
@@ -544,8 +562,9 @@ No custom Docker network is needed. All services in the same profile share Docke
 
 The production profiles use Linux `crontab` inside the container. The schedule is controlled by the `CRONTAB_SCHEDULE` environment variable set in `docker-compose.yml`:
 
-- `batch` profile: `0/2 * * * *` (every 2 minutes)
-- `live` profile: `*/2 * * * *` (every 2 minutes)
+- `batch` profile: `*/5 * * * *` (every 5 minutes)
+- `live` profile: `*/10 * * * *` (every 10 minutes)
+- `live-network` profile: `50 * * * *` (at 50 minutes past each hour)
 
 **_Note:_** The following Gateway flags are required for the tester Gateway to operate in job-test mode:
 
