@@ -1,11 +1,10 @@
 {
-  "region": "NYC",
+  "region": "MDW",
   "jobType" : "ai",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
   "metricsSecret": "PUT_YOUR_SECRET_KEY",
-  "disableStatsPosting": false,
-  "broadcasterJobEndpoint": "http://ai-tester-gateway:8935",
-  "broadcasterCliEndpoint": "http://ai-tester-gateway:7935",
+  "broadcasterJobEndpoint": "http://ai-tester-gateway-live:8935",
+  "broadcasterCliEndpoint": "http://ai-tester-gateway-live:7935",
   "broadcasterRequestToken": "None",
   "logger": {
     "level": "info",

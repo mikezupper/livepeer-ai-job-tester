@@ -24,7 +24,7 @@ import (
 
 const (
 	startupGatewayFetchAttempts = 15
-	startupGatewayFetchDelay    = 2 * time.Second
+	startupGatewayFetchDelay    = 5 * time.Second
 )
 
 // EmbeddedWebhookServer represents the server responsible for managing job testing and orchestrator interactions.
