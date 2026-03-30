@@ -303,7 +303,9 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 	}
 	copiedParams["model_id"] = model
 	copiedParams["pipeline"] = model
-	copiedParams["orchestrator"] = orchServiceUri
+	if os.Getenv("TEST_INDIVIDUAL_ORCHESTRATORS") != "false" {
+		copiedParams["orchestrator"] = orchServiceUri
+	}
 
 	// Marshal the parameters into JSON format.
 	input, err := json.Marshal(copiedParams)
@@ -338,7 +340,12 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 
 		// Non-live job submission
 		// Send the HTTP request
-		url := fmt.Sprintf("%s/%s?orchestrator=%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri, orchServiceUri)
+		var url string
+		if os.Getenv("TEST_INDIVIDUAL_ORCHESTRATORS") != "false" {
+			url = fmt.Sprintf("%s/%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri)
+		} else {
+			url = fmt.Sprintf("%s/%s?orchestrator=%s", ss.config.BroadcasterJobEndpoint, cfgPipeline.Uri, orchServiceUri)
+		}
 		var req *http.Request
 		if cfgPipeline.ContentType == "application/json" {
 			req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(input))
