@@ -150,3 +150,7 @@ services:
       - "1935:1935"
       - "8890:8890"
       - "9997:9997"
+networks:
+  default:
+    name: lpc-tester
+    external: true
