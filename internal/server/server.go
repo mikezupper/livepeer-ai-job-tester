@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -296,15 +297,21 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 		return fmt.Errorf("pipeline not found in configuration file: %s", pipeline)
 	}
 
-	// Copy pipeline parameters and add the model ID and pipeline.
+	// Copy pipeline parameters and inject job-routing fields.
+	// BYOC pipelines use OpenAI-format request bodies — only override the model name;
+	// Livepeer AI fields (model_id, pipeline, orchestrator) must not be added.
 	copiedParams := make(map[string]any)
 	for key, value := range cfgPipeline.Parameters {
 		copiedParams[key] = value
 	}
-	copiedParams["model_id"] = model
-	copiedParams["pipeline"] = model
-	if os.Getenv("TEST_INDIVIDUAL_ORCHESTRATORS") != "false" {
-		copiedParams["orchestrator"] = orchServiceUri
+	if cfgPipeline.BYOC {
+		copiedParams["model"] = model
+	} else {
+		copiedParams["model_id"] = model
+		copiedParams["pipeline"] = model
+		if os.Getenv("TEST_INDIVIDUAL_ORCHESTRATORS") != "false" {
+			copiedParams["orchestrator"] = orchServiceUri
+		}
 	}
 
 	// Marshal the parameters into JSON format.
@@ -355,6 +362,14 @@ func (ss *EmbeddedWebhookServer) SendTestJob(ctx context.Context, orchEthAddr, o
 			}
 			req.Header.Set("Content-Type", cfgPipeline.ContentType)
 			req.Header.Set("Authorization", "Bearer "+ss.config.BroadcasterRequestToken)
+			if cfgPipeline.BYOC && cfgPipeline.CapabilityName != "" {
+				livepeerHdr, hdrErr := buildByocLivepeerHeader(cfgPipeline.CapabilityName, cfgPipeline.ByocTimeoutSeconds)
+				if hdrErr != nil {
+					ss.jobTesterMetrics.IncrementTotalJobsTesterError()
+					return fmt.Errorf("failed to build Livepeer header for BYOC pipeline %s: %w", pipeline, hdrErr)
+				}
+				req.Header.Set("Livepeer", livepeerHdr)
+			}
 		} else {
 			req, err = ss.createMultipartRequest(url, copiedParams, cfgPipeline.Uri)
 			if err != nil {
@@ -431,13 +446,48 @@ func applyMetricsToStats(stats *types.Stats, metrics *ffmpeg.Metrics, cfg *confi
 }
 
 // findParametersByPipelineName searches for a pipeline by name in the configuration file.
+// For BYOC pipelines the discovered name is the capability constraint (e.g. "openai-chat-completions"),
+// which is stored in CapabilityName rather than Uri, so we check that first.
 func (ss *EmbeddedWebhookServer) findParametersByPipelineName(pipelineName string) (*config.Pipeline, bool) {
 	for _, pipeline := range ss.config.Pipelines {
+		if pipeline.CapabilityName != "" && pipeline.CapabilityName == pipelineName {
+			return &pipeline, true
+		}
 		if pipeline.Uri == pipelineName {
 			return &pipeline, true
 		}
 	}
 	return nil, false
+}
+
+// buildByocLivepeerHeader constructs the base64-encoded JSON value required by the gateway's
+// Livepeer header for BYOC (capability 37) requests. The gateway uses this to route the job
+// to an orchestrator that supports the given capability.
+func buildByocLivepeerHeader(capabilityName string, timeoutSeconds int) (string, error) {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 60
+	}
+	requestField, err := json.Marshal(map[string]string{"run": capabilityName})
+	if err != nil {
+		return "", err
+	}
+	parametersField, err := json.Marshal(map[string]any{
+		"orchestrators": map[string]any{"include": []any{}, "exclude": []any{}},
+	})
+	if err != nil {
+		return "", err
+	}
+	hdr := map[string]any{
+		"request":         string(requestField),
+		"parameters":      string(parametersField),
+		"capability":      capabilityName,
+		"timeout_seconds": timeoutSeconds,
+	}
+	b, err := json.Marshal(hdr)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
 }
 
 // createMultipartRequest creates a new multipart/form-data request for pipelines that require file uploads.

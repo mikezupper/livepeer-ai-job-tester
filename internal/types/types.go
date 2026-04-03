@@ -98,6 +98,7 @@ type Model struct {
 type Pipeline struct {
 	Type   string  `json:"type"`
 	Models []Model `json:"models"`
+	BYOC   bool    `json:"byoc,omitempty"`
 }
 
 // OrchestratorCapability represents an orchestrator, including its address, service URI, and pipelines.
@@ -117,11 +118,26 @@ type NetworkCapabilitiesResponse struct {
 }
 
 type NetworkOrchestrator struct {
-	Address      string                  `json:"address"`
-	LocalAddress string                  `json:"local_address"`
-	OrchURI      string                  `json:"orch_uri"`
-	Capabilities NetworkOrchCapabilities `json:"capabilities"`
-	Hardware     []NetworkHardware       `json:"hardware"`
+	Address           string                                 `json:"address"`
+	LocalAddress      string                                 `json:"local_address"`
+	OrchURI           string                                 `json:"orch_uri"`
+	Capabilities      NetworkOrchCapabilities                `json:"capabilities"`
+	Hardware          []NetworkHardware                      `json:"hardware"`
+	CapabilityPrices  []NetworkCapabilityPrice               `json:"capabilities_prices,omitempty"`
+	CapabilityOptions map[string][]NetworkCapabilityModelOpt `json:"capability_options,omitempty"`
+}
+
+// NetworkCapabilityPrice represents a BYOC (capability 37) price entry advertised by an orchestrator.
+type NetworkCapabilityPrice struct {
+	PricePerUnit  int64  `json:"pricePerUnit"`
+	PixelsPerUnit int64  `json:"pixelsPerUnit"`
+	Capability    int    `json:"capability"`
+	Constraint    string `json:"constraint"`
+}
+
+// NetworkCapabilityModelOpt represents a model option advertised under a BYOC capability constraint.
+type NetworkCapabilityModelOpt struct {
+	Model string `json:"model"`
 }
 
 type NetworkOrchCapabilities struct {
