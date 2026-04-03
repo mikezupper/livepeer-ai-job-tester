@@ -243,6 +243,50 @@ func (s *HTTPLivepeerService) FetchPipelines(ctx context.Context) (*types.Pipeli
 			}
 		}
 
+		// Process BYOC capabilities (capability ID 37): constraint name is the pipeline,
+		// capability_options lists available models per constraint.
+		const byocCapabilityID = 37
+		for _, price := range orch.CapabilityPrices {
+			if price.Capability != byocCapabilityID || price.Constraint == "" {
+				continue
+			}
+			constraintName := price.Constraint
+			modelOpts, hasOpts := orch.CapabilityOptions[constraintName]
+			if !hasOpts || len(modelOpts) == 0 {
+				s.logger.WarnContext(ctx, "BYOC capability has no model options",
+					slog.String("orch", orchAddr),
+					slog.String("constraint", constraintName))
+				continue
+			}
+			p, exists := pipelineByName[constraintName]
+			if !exists {
+				p = &types.Pipeline{Type: constraintName, BYOC: true}
+				pipelineByName[constraintName] = p
+				pipelineCount++
+			}
+			if seenModel[constraintName] == nil {
+				seenModel[constraintName] = map[string]bool{}
+			}
+			for _, opt := range modelOpts {
+				if seenModel[constraintName][opt.Model] {
+					continue
+				}
+				p.Models = append(p.Models, types.Model{
+					Name:   opt.Model,
+					Warm:   true,
+					Status: types.Status{Warm: 1},
+				})
+				seenModel[constraintName][opt.Model] = true
+				modelCount++
+				totalModels++
+				globalModelSet[opt.Model] = true
+				s.logger.DebugContext(ctx, "BYOC capability discovered",
+					slog.String("orch", orchAddr),
+					slog.String("constraint", constraintName),
+					slog.String("model", opt.Model))
+			}
+		}
+
 		// Attach pipelines to orchCap (even if empty, we still include the orch)
 		for _, p := range pipelineByName {
 			orchCap.Pipelines = append(orchCap.Pipelines, *p)

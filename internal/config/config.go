@@ -29,13 +29,16 @@ type Config struct {
 // It includes the name, URI, whether to capture responses,
 // the content type, and additional parameters for the pipeline.
 type Pipeline struct {
-	Name            string                 `json:"name"`
-	Uri             string                 `json:"uri"`
-	CaptureResponse bool                   `json:"capture_response"`
-	ContentType     string                 `json:"contentType"`
-	Parameters      map[string]interface{} `json:"parameters"`
-	Live            bool                   `json:"live,omitempty"`
-	PromptVariants  []PromptVariant        `json:"promptVariants,omitempty"`
+	Name               string                 `json:"name"`
+	Uri                string                 `json:"uri"`
+	CaptureResponse    bool                   `json:"capture_response"`
+	ContentType        string                 `json:"contentType"`
+	Parameters         map[string]interface{} `json:"parameters"`
+	Live               bool                   `json:"live,omitempty"`
+	PromptVariants     []PromptVariant        `json:"promptVariants,omitempty"`
+	BYOC               bool                   `json:"byoc,omitempty"`
+	CapabilityName     string                 `json:"capability_name,omitempty"`
+	ByocTimeoutSeconds int                    `json:"byoc_timeout_seconds,omitempty"`
 }
 
 // LiveVideoConfig captures configuration specific to live video pipeline tests.
