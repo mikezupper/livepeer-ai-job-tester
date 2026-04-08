@@ -1,13 +1,20 @@
 {
-  "region": "NYC",
+  "region": "MDW",
   "jobType" : "ai",
-  "internalWebServerPort": "7934",
-  "internalWebServerAddress": "0.0.0.0",
   "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
-  "metricsSecret": "my-secret-key",
-  "broadcasterJobEndpoint": "http://localhost:8935",
-  "broadcasterCliEndpoint": "http://localhost:7935",
+  "metricsSecret": "PUT_YOUR_SECRET_KEY",
+  "broadcasterJobEndpoint": "http://ai-tester-gateway-batch:8935",
+  "broadcasterCliEndpoint": "http://ai-tester-gateway-batch:7935",
   "broadcasterRequestToken": "None",
+  "logger": {
+    "level": "info",
+    "format": "TEXT",
+    "modules": {
+      "app": "info",
+      "server": "info",
+      "ffmpeg": "info"
+    }
+  },
   "pipelines": [
     {
       "name": "Segment anything 2",
@@ -92,10 +99,12 @@
       "name": "Llm",
       "uri": "llm",
       "capture_response": true,
-      "contentType": "multipart/form-data",
+      "contentType": "application/json",
       "parameters": {
-        "max_tokens": 256,
-        "prompt": "how many characters are in an ethereum address?"
+        "model":"meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "messages":[{"role":"system","content":"I am blockchain expert"},{"role":"user","content":"how many characters are in an ethereum address?"}],
+        "max_tokens":8192,
+        "stream":false
       }
     },
     {

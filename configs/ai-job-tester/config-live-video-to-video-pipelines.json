@@ -1,0 +1,60 @@
+{
+  "region": "MDW",
+  "jobType" : "ai",
+  "metricsApiEndpoint": "http://localhost:8080/api/post_stats",
+  "metricsSecret": "PUT_YOUR_SECRET_KEY",
+  "broadcasterJobEndpoint": "http://ai-tester-gateway-live:8935",
+  "broadcasterCliEndpoint": "http://ai-tester-gateway-live:7935",
+  "broadcasterRequestToken": "None",
+  "logger": {
+    "level": "info",
+    "format": "TEXT",
+    "modules": {
+      "app": "info",
+      "server": "info",
+      "ffmpeg": "info"
+    }
+  },
+  "liveVideo": {
+    "mediaServerURL": "rtmp://live-video-to-video-mediamtx:1935",
+    "testVideoPath": "test-assets/live-test-video.mp4",
+    "testDurationSeconds": 60,
+    "statusPollTimeoutSeconds": 20,
+    "statusPollIntervalSeconds": 1,
+    "metricRetryDelayMilliseconds": 200,
+    "maxMetricAttempts": 300,
+    "maxProbeAttempts": 5,
+    "targetFPS": 12,
+    "maxInitialLatencySeconds": 8
+  },
+  "pipelines": [
+    {
+      "name": "Live video to video",
+      "uri": "live-video-to-video",
+      "live": true,
+      "promptVariants": [
+        {
+          "id": "watercolor-low",
+          "complexity": "low",
+          "parameters": {
+            "prompt": "watercolor painting style"
+          }
+        },
+        {
+          "id": "cyberpunk-medium",
+          "complexity": "medium",
+          "parameters": {
+            "prompt": "a cinematic cyberpunk street with neon reflections and rainy atmosphere"
+          }
+        },
+        {
+          "id": "festival-high",
+          "complexity": "high",
+          "parameters": {
+            "prompt": "a vibrant futuristic street festival with floating lanterns, layered holograms, dramatic depth, and richly detailed costumes"
+          }
+        }
+      ]
+    }
+  ]
+}

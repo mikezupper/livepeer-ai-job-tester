@@ -1,53 +1,87 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
 	"livepeer-job-tester/internal/config"
+	"livepeer-job-tester/internal/ffmpeg"
+	"livepeer-job-tester/internal/gateway/status"
+	"livepeer-job-tester/internal/logging"
 	"livepeer-job-tester/internal/server"
 	"livepeer-job-tester/internal/services"
-	"log"
-	"net/http"
-	"time"
 )
 
 // main is the entry point of the application. It loads the configuration file, sets up the HTTP client,
-// initializes the Livepeer service, and starts the embedded webhook server. It also invokes the test job logic.
+// initializes the Livepeer service, and runs the test job logic.
 func main() {
 	// Parse command-line flags to get the configuration file path.
 	configFile := flag.String("f", "configs/config.json", "path to the config file")
+	liveManualAttachSeconds := flag.Int("liveManualAttachSeconds", 0, "local-only delay after live readiness before metrics collection, giving you time to open the playback URL manually")
 	flag.Parse()
+
+	ctx := context.Background()
 
 	// Load the configuration file.
 	configLoader := &config.JSONConfigLoader{}
 	cfg, err := configLoader.Load(*configFile)
 	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
+		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+		os.Exit(1)
 	}
+
+	loggerCfg := logging.Config{Level: "info"}
+	if cfg.Logger != nil {
+		loggerCfg.Level = cfg.Logger.Level
+		loggerCfg.Format = cfg.Logger.Format
+		loggerCfg.Modules = cfg.Logger.Modules
+	}
+
+	loggerManager, err := logging.NewManager(loggerCfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	appLogger := loggerManager.Logger("app")
 
 	// Create an HTTP client with a custom transport.
 	client := createHTTPClient()
 
 	// Initialize the Livepeer service with the HTTP client and loaded configuration.
-	livepeerService := services.NewHTTPLivepeerService(client, cfg)
-
-	// Create and start the embedded webhook server.
-	webhookServer := server.NewEmbeddedWebhookServer(cfg, client, livepeerService)
-
-	// Build the address for the server based on the configuration.
-	addr := fmt.Sprintf("%s:%s", cfg.InternalWebServerAddress, cfg.InternalWebServerPort)
-
-	// Start the server in a separate goroutine to handle requests.
-	go func() {
-		if err := webhookServer.StartServer(addr); err != nil {
-			log.Fatalf("Error starting server: %v", err)
-		}
-	}()
+	livepeerService := services.NewHTTPLivepeerService(client, cfg, loggerManager.Logger("livepeer"))
+	statusClient := status.NewClient(client, loggerManager.Logger("gateway-status"))
+	ffmpegClient, err := ffmpeg.NewClient(loggerManager.Logger("ffmpeg"), statusClient)
+	if err != nil {
+		appLogger.Error("failed to construct ffmpeg client", slog.Any("error", err))
+		os.Exit(1)
+	}
+	webhookServer, err := server.NewEmbeddedWebhookServer(
+		cfg,
+		client,
+		livepeerService,
+		ffmpegClient,
+		statusClient,
+		server.RuntimeOptions{
+			LiveManualAttachDelay: time.Duration(*liveManualAttachSeconds) * time.Second,
+		},
+		loggerManager.Logger("server"),
+	)
+	if err != nil {
+		appLogger.Error("failed to construct webhook server", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	// Run the logic to fetch orchestrators, pipelines, and send test jobs.
-	if err := webhookServer.RunTestJobs(); err != nil {
-		log.Fatalf("Error running test jobs: %v", err)
+	if err := webhookServer.RunTestJobs(ctx); err != nil {
+		appLogger.ErrorContext(ctx, "error running test jobs", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
 

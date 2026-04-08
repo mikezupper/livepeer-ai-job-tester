@@ -9,11 +9,15 @@ import "sync"
 type JobTesterMetrics struct {
 	lock sync.RWMutex // RWMutex ensures safe concurrent access to the fields.
 
-	TotalJobs            int `json:"total_jobs"`              // Total number of jobs processed.
-	TotalJobsTesterError int `json:"total_jobs_tester_error"` // Number of jobs that encountered tester errors.
-	TotalJobsPassed      int `json:"total_jobs_passed"`       // Number of jobs that passed successfully.
-	TotalJobsFailed      int `json:"total_jobs_failed"`       // Number of jobs that failed.
-	ExpectedTotalJobs    int `json:"expected_total_jobs"`     // The expected number of jobs to process.
+	TotalJobs                      int `json:"total_jobs"`                        // Total number of jobs processed.
+	TotalJobsTesterError           int `json:"total_jobs_tester_error"`           // Number of jobs that encountered tester errors.
+	TotalJobsPassed                int `json:"total_jobs_passed"`                 // Number of jobs that passed successfully.
+	TotalJobsFailed                int `json:"total_jobs_failed"`                 // Number of jobs that failed.
+	TotalJobsDeferredBusy          int `json:"total_jobs_deferred_busy"`          // Jobs deferred because the orch appears busy.
+	TotalJobsDeferredIndeterminate int `json:"total_jobs_deferred_indeterminate"` // Jobs deferred because capacity state is unclear.
+	TotalJobsUnscoredBusy          int `json:"total_jobs_unscored_busy"`          // Jobs that never ran because the orch stayed busy.
+	TotalJobsUnscoredIndeterminate int `json:"total_jobs_unscored_indeterminate"` // Jobs that never ran because capacity stayed unclear.
+	ExpectedTotalJobs              int `json:"expected_total_jobs"`               // The expected number of jobs to process.
 }
 
 // NewJobTesterMetrics initializes and returns a pointer to a new JobTesterMetrics instance.
@@ -60,4 +64,32 @@ func (js *JobTesterMetrics) IncrementExpectedTotalJobs() {
 	js.lock.Lock()
 	defer js.lock.Unlock()
 	js.ExpectedTotalJobs++
+}
+
+// IncrementTotalJobsDeferredBusy increments the count of busy live jobs that were deferred.
+func (js *JobTesterMetrics) IncrementTotalJobsDeferredBusy() {
+	js.lock.Lock()
+	defer js.lock.Unlock()
+	js.TotalJobsDeferredBusy++
+}
+
+// IncrementTotalJobsDeferredIndeterminate increments the count of indeterminate live jobs that were deferred.
+func (js *JobTesterMetrics) IncrementTotalJobsDeferredIndeterminate() {
+	js.lock.Lock()
+	defer js.lock.Unlock()
+	js.TotalJobsDeferredIndeterminate++
+}
+
+// IncrementTotalJobsUnscoredBusy increments the count of busy live jobs that exhausted retries.
+func (js *JobTesterMetrics) IncrementTotalJobsUnscoredBusy() {
+	js.lock.Lock()
+	defer js.lock.Unlock()
+	js.TotalJobsUnscoredBusy++
+}
+
+// IncrementTotalJobsUnscoredIndeterminate increments the count of indeterminate live jobs that exhausted retries.
+func (js *JobTesterMetrics) IncrementTotalJobsUnscoredIndeterminate() {
+	js.lock.Lock()
+	defer js.lock.Unlock()
+	js.TotalJobsUnscoredIndeterminate++
 }

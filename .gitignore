@@ -21,3 +21,13 @@
 # Go workspace file
 go.work
 
+# runtime folders and files generated when running the tester from this project
+recordings
+
+# Gateway credentials — never commit keystore or eth-secret
+configs/gateway/*.txt
+configs/gateway/*.json
+
+# binary output file
+/.idea/
+/configs/gateway/arbitrum-one-mainnet
